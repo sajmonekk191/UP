@@ -3,83 +3,82 @@ import SwiftUI
 struct ToolsView: View, Equatable {
     @Environment(AppModel.self) private var model
     var openChampSelect: () -> Void
-    @State private var statusMessage = ""
-    @State private var availability = "chat"
+    @State private var tab: Tab = .game
     @State private var queueId = 420
+    @State private var queues: [ClientTools.Queue] = []
+    @State private var botDifficulty = "MEDIUM"
+    @State private var pickMode = 1
     @State private var confirmRestart = false
+    @State private var confirmDodge = false
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
 
-    private let queues: [(Int, String)] = [
+    enum Tab: Hashable { case game, profile, social, secret }
+
+    private let fallbackQueues: [(Int, String)] = [
         (420, tr("Ranked Solo")), (440, tr("Ranked Flex")), (400, tr("Normal Draft")), (490, tr("Quickplay")),
         (450, "ARAM"), (1700, tr("Arena")), (1900, "URF"), (830, tr("Co-op vs AI")),
     ]
 
     var body: some View {
         Screen(title: tr("Tools"), subtitle: tr("Control the client through its official local API")) {
-            HStack(alignment: .top, spacing: Theme.gap) {
-                Panel(title: tr("Lobby & queue"), symbol: "person.3.fill") {
-                    Picker(tr("Mode"), selection: $queueId) {
-                        ForEach(queues, id: \.0) { Text($0.1).tag($0.0) }
+            Segmented(options: [(Tab.game, tr("Game")), (.profile, tr("Profile")), (.social, tr("Friends & loot")), (.secret, tr("Secret"))], selection: $tab)
+        } content: {
+            switch tab {
+            case .game: gameTools
+            case .profile: ProfileTools()
+            case .social: SocialTools()
+            case .secret: SecretTools()
+            }
+        }
+        .confirmationDialog(tr("Restart the client UI?"), isPresented: $confirmRestart) {
+            Button(tr("Restart")) {
+                Task { await model.perform(tr("Client UI restarted")) { try await $0.post("/riotclient/kill-and-restart-ux") } }
+            }
+        }
+        .confirmationDialog(tr("Dodge champion select?"), isPresented: $confirmDodge) {
+            Button(tr("Dodge"), role: .destructive) {
+                Task { await model.perform(tr("Champion select left")) { try await ClientTools.dodge(client: $0) } }
+            }
+        } message: {
+            Text(tr("You leave champion select without closing the client. The usual dodge penalty still applies."))
+        }
+        .task(id: model.connection) {
+            guard let client = model.client, let loaded = try? await ClientTools.queues(client: client), !loaded.isEmpty else { return }
+            queues = loaded
+            if !loaded.contains(where: { $0.id == queueId }) { queueId = loaded.first { $0.id == 420 }?.id ?? loaded[0].id }
+        }
+    }
+
+    @ViewBuilder
+    private var gameTools: some View {
+        HStack(alignment: .top, spacing: Theme.gap) {
+            lobbyPanel
+            Panel(title: tr("Quick actions"), symbol: "bolt.fill") {
+                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
+                    action(tr("Accept match"), "checkmark.circle") { try await $0.post("/lol-matchmaking/v1/ready-check/accept") }
+                    action(tr("Play again"), "arrow.uturn.backward") { try await $0.post("/lol-lobby/v2/play-again") }
+                    action(tr("Skip post-game stats"), "xmark.rectangle") { try await $0.post("/lol-end-of-game/v1/state/dismiss-stats") }
+                    action(tr("Reconnect"), "arrow.triangle.2.circlepath") { try await $0.post("/lol-gameflow/v1/reconnect") }
+                    action(tr("Leave lobby"), "rectangle.portrait.and.arrow.right") { try await $0.delete("/lol-lobby/v2/lobby") }
+                    action(tr("ARAM reroll"), "dice") { try await $0.post("/lol-champ-select/v1/session/my-selection/reroll") }
+                    action(tr("Reroll for the team"), "gift") { try await ClientTools.rerollForTeam(client: $0) }
+                        .help(tr("Rerolls and takes your champion back from the bench, so the new one is left to your teammates"))
+                    Button { confirmDodge = true } label: {
+                        Label(tr("Dodge"), systemImage: "figure.walk.departure").frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .labelsHidden()
-                    HStack {
-                        Button(tr("Create lobby")) {
-                            Task { await model.perform(tr("Lobby created")) { try await $0.post("/lol-lobby/v2/lobby", ["queueId": queueId]) } }
-                        }
-                        .buttonStyle(.primary)
-                        Button(tr("Find match")) {
-                            Task { await model.perform(tr("Queue started")) { try await $0.post("/lol-lobby/v2/lobby/matchmaking/search") } }
-                        }
-                        .buttonStyle(.secondary)
-                        Button(tr("Cancel")) {
-                            Task { await model.perform(tr("Queue cancelled")) { try await $0.delete("/lol-lobby/v2/lobby/matchmaking/search") } }
-                        }
-                        .buttonStyle(.secondary)
-                    }
-                }
-                Panel(title: tr("Quick actions"), symbol: "bolt.fill") {
-                    LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
-                        action(tr("Accept match"), "checkmark.circle") { try await $0.post("/lol-matchmaking/v1/ready-check/accept") }
-                        action(tr("Play again"), "arrow.uturn.backward") { try await $0.post("/lol-lobby/v2/play-again") }
-                        action(tr("Skip post-game stats"), "xmark.rectangle") { try await $0.post("/lol-end-of-game/v1/state/dismiss-stats") }
-                        action(tr("Reconnect"), "arrow.triangle.2.circlepath") { try await $0.post("/lol-gameflow/v1/reconnect") }
-                    }
+                    .buttonStyle(.secondary)
+                    .help(tr("Leave champion select without closing the client"))
                 }
             }
-            HStack(alignment: .top, spacing: Theme.gap) {
-                Panel(title: tr("Chat & status"), symbol: "bubble.left.and.bubble.right.fill") {
-                    HStack {
-                        TextField(tr("Status message"), text: $statusMessage).textFieldStyle(.plain).foregroundStyle(Theme.text)
-                            .padding(9).panelBackground(Theme.raised, radius: 8)
-                        Button(tr("Set")) {
-                            Task { await model.perform(tr("Status updated")) { try await $0.put("/lol-chat/v1/me", ["statusMessage": statusMessage]) } }
-                        }
-                        .buttonStyle(.primary)
-                    }
-                    Segmented(options: [("chat", tr("Online")), ("away", tr("Away")), ("mobile", tr("Mobile")), ("offline", tr("Offline"))],
-                              selection: Binding(get: { availability }, set: { value in
-                                  availability = value
-                                  Task { await model.perform(tr("Availability changed")) { try await $0.put("/lol-chat/v1/me", ["availability": value]) } }
-                              }))
-                }
-                Panel(title: tr("Champ select assistant"), symbol: "binoculars.fill") {
-                    Text(tr("Try the assistant window with a sample draft, no game needed.")).font(.callout).foregroundStyle(Theme.textSecondary)
-                    HStack {
-                        Button { model.startPreview(); openChampSelect() } label: { Label(tr("Preview champ select"), systemImage: "eye") }
-                            .buttonStyle(.primary).disabled(model.connection != .connected)
-                        Button(action: openChampSelect) { Label(tr("Open window"), systemImage: "macwindow") }.buttonStyle(.secondary)
-                    }
-                }
-            }
-            Panel(title: tr("In-game HUD"), symbol: "rectangle.on.rectangle") {
-                Text(tr("The HUD appears over the game by itself when a match starts: dragon, Baron and inhibitor timers, every enemy with level, respawn timer and all items (counter items outlined), your next item and CS per minute, and pop-up alerts.")).font(.callout).foregroundStyle(Theme.textSecondary)
+        }
+        HStack(alignment: .top, spacing: Theme.gap) {
+            Panel(title: tr("Champ select assistant"), symbol: "binoculars.fill") {
+                Text(tr("Try the assistant window with a sample draft, no game needed.")).font(.callout).foregroundStyle(Theme.textSecondary)
                 HStack {
-                    Button { model.startHUDPreview() } label: { Label(tr("Preview in-game HUD"), systemImage: "play.rectangle") }
-                        .buttonStyle(.primary)
-                    if model.isHUDPreview { Button(tr("Stop preview")) { model.endHUDPreview() }.buttonStyle(.secondary) }
-                    Spacer()
-                    Text(tr("⌃⇧H show or hide · ⇧Tab match overview")).font(.caption).foregroundStyle(Theme.textMuted)
+                    Button { model.startPreview(); openChampSelect() } label: { Label(tr("Preview champ select"), systemImage: "eye") }
+                        .buttonStyle(.primary).disabled(model.connection != .connected)
+                    Button(action: openChampSelect) { Label(tr("Open window"), systemImage: "macwindow") }.buttonStyle(.secondary)
                 }
             }
             Panel(title: tr("Maintenance"), symbol: "wrench.and.screwdriver.fill") {
@@ -95,17 +94,104 @@ struct ToolsView: View, Equatable {
                 Text(tr("Restarting the UI helps when the client freezes. Your queue and account are unaffected.")).font(.caption).foregroundStyle(Theme.textMuted)
             }
         }
-        .confirmationDialog(tr("Restart the client UI?"), isPresented: $confirmRestart) {
-            Button(tr("Restart")) {
-                Task { await model.perform(tr("Client UI restarted")) { try await $0.post("/riotclient/kill-and-restart-ux") } }
+        Panel(title: tr("In-game HUD"), symbol: "rectangle.on.rectangle") {
+            Text(tr("The HUD appears over the game by itself when a match starts: dragon, Baron and inhibitor timers, every enemy with level, respawn timer and all items (counter items outlined), your next item and CS per minute, and pop-up alerts.")).font(.callout).foregroundStyle(Theme.textSecondary)
+            HStack {
+                Button { model.startHUDPreview() } label: { Label(tr("Preview in-game HUD"), systemImage: "play.rectangle") }
+                    .buttonStyle(.primary)
+                if model.isHUDPreview { Button(tr("Stop preview")) { model.endHUDPreview() }.buttonStyle(.secondary) }
+                Spacer()
+                Text(tr("⌃⇧H show or hide · ⇧Tab match overview")).font(.caption).foregroundStyle(Theme.textMuted)
             }
         }
-        .task {
-            guard let client = model.client,
-                  let data = try? await client.request("GET", "/lol-chat/v1/me"),
-                  let me = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            statusMessage = me["statusMessage"] as? String ?? ""
-            availability = me["availability"] as? String ?? "chat"
+    }
+
+    private var lobbyPanel: some View {
+        Panel(title: tr("Lobby & queue"), symbol: "person.3.fill") {
+            Picker(tr("Mode"), selection: $queueId) {
+                if queues.isEmpty {
+                    ForEach(fallbackQueues, id: \.0) { Text($0.1).tag($0.0) }
+                } else {
+                    queueSection("PvP", queues.filter { $0.isCustom != true && $0.category != "VersusAi" })
+                    queueSection(tr("Co-op vs AI"), queues.filter { $0.category == "VersusAi" })
+                    queueSection(tr("Custom games"), queues.filter { $0.isCustom == true })
+                }
+            }
+            .labelsHidden().handCursor()
+            HStack {
+                Button(tr("Create lobby")) { Task { await createLobby() } }
+                    .buttonStyle(.primary)
+                Button(tr("Find match")) {
+                    Task { await model.perform(tr("Queue started")) { try await $0.post("/lol-lobby/v2/lobby/matchmaking/search") } }
+                }
+                .buttonStyle(.secondary)
+                Button(tr("Cancel")) {
+                    Task { await model.perform(tr("Queue cancelled")) { try await $0.delete("/lol-lobby/v2/lobby/matchmaking/search") } }
+                }
+                .buttonStyle(.secondary)
+            }
+            if let queue = queues.first(where: { $0.id == queueId }), queue.isCustom == true {
+                if queue.gameMode != "PRACTICETOOL" {
+                    optionRow(tr("Pick mode")) {
+                        Picker(tr("Pick mode"), selection: $pickMode) {
+                            ForEach(pickModes, id: \.0) { Text($0.1).tag($0.0) }
+                        }
+                        .labelsHidden().fixedSize().handCursor()
+                    }
+                }
+                optionRow(tr("Bots")) {
+                    Segmented(options: [("EASY", tr("Beginner")), ("MEDIUM", tr("Intermediate"))], selection: $botDifficulty)
+                    Button { Task { await addBots(team: "200") } } label: { Label(tr("Enemy team"), systemImage: "cpu") }
+                        .buttonStyle(.secondary)
+                    Button { Task { await addBots(team: "100") } } label: { Label(tr("Your team"), systemImage: "cpu") }
+                        .buttonStyle(.secondary)
+                }
+            }
+        }
+        .onChange(of: queueId) {
+            let mode = queues.first { $0.id == queueId }?.gameTypeConfig?.id
+            pickMode = pickModes.contains { $0.0 == mode } ? mode ?? 1 : 1
+        }
+    }
+
+    private var pickModes: [(Int, String)] {
+        [(1, tr("Blind pick")), (2, tr("Draft")), (4, tr("All random")), (6, tr("Tournament draft"))]
+    }
+
+    private func optionRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 10) {
+            Text(title).font(.callout).foregroundStyle(Theme.textSecondary).frame(width: 80, alignment: .leading)
+            content()
+        }
+    }
+
+    @ViewBuilder
+    private func queueSection(_ title: String, _ queues: [ClientTools.Queue]) -> some View {
+        if !queues.isEmpty {
+            Section(title) { ForEach(queues) { Text($0.title).tag($0.id) } }
+        }
+    }
+
+    private func createLobby() async {
+        let queue = queues.first { $0.id == queueId }
+        let name = tr("%@'s game", model.me?.gameName ?? "UP!")
+        let mode = queue?.isCustom == true && queue?.gameMode != "PRACTICETOOL" ? pickMode : nil
+        await model.perform(tr("Lobby created")) { client in
+            if let queue {
+                try await ClientTools.createLobby(queue, name: name, pickMode: mode, client: client)
+            } else {
+                try await client.post("/lol-lobby/v2/lobby", ["queueId": queueId])
+            }
+        }
+    }
+
+    private func addBots(team: String) async {
+        guard let client = model.client else { return model.notify(tr("Client is not connected"), .warning) }
+        do {
+            let added = try await ClientTools.addBots(difficulty: botDifficulty, team: team, client: client)
+            model.notify(team == "100" ? tr("%d bots joined your team", added) : tr("%d bots joined the enemy team", added), .success)
+        } catch {
+            model.notify(tr("%@ failed: %@", tr("Adding bots"), error.localizedDescription), .warning)
         }
     }
 

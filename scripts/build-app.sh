@@ -3,11 +3,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release
+if [[ "${1:-}" == "--universal" ]]; then
+  swift build -c release --arch arm64 --arch x86_64
+  BINARY=.build/apple/Products/Release/UP
+else
+  swift build -c release
+  BINARY=.build/release/UP
+fi
 APP="dist/UP!.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/UP "$APP/Contents/MacOS/UP"
+cp "$BINARY" "$APP/Contents/MacOS/UP"
 [[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -21,8 +27,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>UP</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>2.0.0</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>1.3</string>
+    <key>CFBundleVersion</key><string>1.3</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>

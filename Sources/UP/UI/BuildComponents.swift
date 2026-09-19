@@ -19,11 +19,16 @@ struct BuildDetails: View {
     var extraRunes: [RuneSetup] = []
     let championId: Int
     var showChampionInfo = true
+    var showRunes = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gap) {
             if let build { BuildHeadline(build: build) }
-            RunePanel(runes: (build?.runes ?? []) + extraRunes, championId: championId)
+            if let build, !build.augments.isEmpty {
+                AugmentPanels(augments: build.augments)
+            } else if showRunes {
+                RunePanel(runes: (build?.runes ?? []) + extraRunes, championId: championId)
+            }
             if let build {
                 ItemPanels(build: build)
                 if let skill = build.skillOrder { SkillOrderPanel(skill: skill) }
@@ -45,6 +50,12 @@ struct BuildDetails: View {
                                 MatchupList(title: tr("Easiest matchups"), symbol: "hand.thumbsup.fill", matchups: Array(build.counters.sorted { $0.winRate > $1.winRate }.prefix(6)))
                             }
                         }
+                        if !build.duoPartners.isEmpty {
+                            HStack(alignment: .top, spacing: Theme.gap) {
+                                MatchupList(title: tr("Best duo partners"), symbol: "person.2.fill", matchups: Array(build.duoPartners.sorted { $0.winRate > $1.winRate }.prefix(6)))
+                                MatchupList(title: tr("Most played duo partners"), symbol: "person.2.circle.fill", matchups: Array(build.duoPartners.sorted { $0.play > $1.play }.prefix(6)))
+                            }
+                        }
                     }
                     if showChampionInfo { ChampionInfoPanel(championId: championId) }
                 }
@@ -57,6 +68,20 @@ struct BuildHeadline: View {
     let build: ChampionBuild
 
     var body: some View {
+        if let place = build.averagePlace {
+            HStack(spacing: 12) {
+                StatTile(label: tr("Win rate"), value: percent(build.winRate), sub: tr("Top 4 finish"), valueColor: winRateColor(build.winRate))
+                StatTile(label: tr("1st place"), value: percent(build.firstPlaceRate))
+                StatTile(label: tr("Average place"), value: decimal(place, 2))
+                StatTile(label: tr("Pick rate"), value: percent(build.pickRate))
+                StatTile(label: tr("Tier"), value: tierName(build.tier), sub: build.rank.map { tr("#%d in Arena", $0) }, valueColor: (build.tier ?? 5) <= 1 ? Theme.gold : Theme.text)
+            }
+        } else {
+            laneHeadline
+        }
+    }
+
+    private var laneHeadline: some View {
         HStack(spacing: 12) {
             StatTile(label: tr("Win rate"), value: percent(build.winRate), valueColor: winRateColor(build.winRate), trend: build.patchTrend.map(\.winRate))
             StatTile(label: tr("Pick rate"), value: percent(build.pickRate))
@@ -91,8 +116,15 @@ struct ItemPanels: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Theme.gap) {
-            statList(tr("Summoner spells"), "sparkles", build.spells.prefix(3)) { ids in HStack(spacing: 4) { ForEach(ids, id: \.self) { SpellIcon(id: $0, size: 28) } } }
-            statList(tr("Starting items"), "bag.fill", build.starterItems.prefix(3)) { ids in HStack(spacing: 3) { ForEach(Array(ids.enumerated()), id: \.offset) { ItemIcon(id: $0.element, size: 28) } } }
+            if !build.spells.isEmpty {
+                statList(tr("Summoner spells"), "sparkles", build.spells.prefix(3)) { ids in HStack(spacing: 4) { ForEach(ids, id: \.self) { SpellIcon(id: $0, size: 28) } } }
+            }
+            if !build.starterItems.isEmpty {
+                statList(tr("Starting items"), "bag.fill", build.starterItems.prefix(3)) { ids in HStack(spacing: 3) { ForEach(Array(ids.enumerated()), id: \.offset) { ItemIcon(id: $0.element, size: 28) } } }
+            }
+            if !build.prismItems.isEmpty {
+                statList(tr("Prismatic items"), "diamond.fill", build.prismItems.prefix(3)) { ids in HStack { ForEach(ids, id: \.self) { ItemIcon(id: $0, size: 28) } } }
+            }
             statList(tr("Boots"), "shoeprints.fill", build.boots.prefix(3)) { ids in HStack { ForEach(ids, id: \.self) { ItemIcon(id: $0, size: 28) } } }
         }
         Panel(title: tr("Core build"), symbol: "shield.lefthalf.filled") {
@@ -127,6 +159,38 @@ struct ItemPanels: View {
                 VStack(alignment: .leading, spacing: 6) {
                     icons(stat.ids)
                     WinRateMeter(winRate: stat.winRate, games: stat.play)
+                }
+            }
+        }
+    }
+}
+
+/// Best Arena augments of each rarity with how often they end in the top four.
+struct AugmentPanels: View {
+    @Environment(AppModel.self) private var model
+    let augments: [ChampionBuild.Augment]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.gap) {
+            column(tr("Silver augments"), Theme.textSecondary, rarity: 1)
+            column(tr("Gold augments"), Theme.gold, rarity: 4)
+            column(tr("Prismatic augments"), Theme.accentBright, rarity: 8)
+        }
+    }
+
+    private func column(_ title: String, _ tint: Color, rarity: Int) -> some View {
+        Panel(title: title, symbol: "sparkles.rectangle.stack.fill") {
+            let shown = augments.filter { $0.rarity == rarity }.prefix(6)
+            if shown.isEmpty { Text(tr("No data.")).foregroundStyle(Theme.textSecondary) }
+            ForEach(Array(shown)) { augment in
+                let info = model.gameData.augments[augment.id]
+                HStack(spacing: 10) {
+                    LCUImage(path: info?.augmentSmallIconPath, size: 34, corner: 8)
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(tint.opacity(0.7)))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(info?.nameTRA ?? "#\(augment.id)").font(.callout.weight(.semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                        WinRateMeter(winRate: augment.winRate, games: augment.play)
+                    }
                 }
             }
         }

@@ -52,6 +52,8 @@ enum SelfTest {
                   "WR \(percent(build.winRate)), \(build.runes.count) rune sets, core \(build.coreItems.first?.ids ?? []), skill \(build.skillOrder?.priority ?? [])")
             let aram = try await BuildService.opggBuild(championId: 103, lane: nil, mode: .aram)
             check("op.gg build (ARAM)", !aram.runes.isEmpty, "\(aram.runes.count) rune sets")
+            let arena = try await BuildService.opggBuild(championId: 103, lane: nil, mode: .arena)
+            check("op.gg build (Arena)", !arena.augments.isEmpty, "\(arena.augments.count) augments, top 4 \(percent(arena.winRate)), avg place \(arena.averagePlace.map { decimal($0, 2) } ?? "-")")
         } catch {
             check("op.gg build", false, error.localizedDescription)
         }

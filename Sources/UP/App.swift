@@ -123,6 +123,7 @@ struct ContentView: View {
     @State private var tierLane: Lane = .middle
     @State private var playerQuery: PlayerQuery?
     @State private var visited: [Page] = [.dashboard]
+    @State private var tooltip = TooltipState()
 
     var body: some View {
         let style = model.settings.navigationStyle
@@ -150,6 +151,12 @@ struct ContentView: View {
                     .padding(.bottom, 18)
                 }
             }
+        }
+        .overlay { TooltipLayer() }
+        .environment(tooltip)
+        .environment(\.openPlayer) { query in
+            playerQuery = query
+            go(.player)
         }
         .environment(\.contentBottomInset, style == .dock ? Theme.dockClearance : 40)
         .onChange(of: page) { _, shown in

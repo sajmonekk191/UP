@@ -110,6 +110,7 @@ struct RefreshButton: View {
 extension EnvironmentValues {
     @Entry var panelFillsHeight = false
     @Entry var contentBottomInset: CGFloat = 24
+    @Entry var openPlayer: ((PlayerQuery) -> Void)?
 }
 
 struct Panel<Accessory: View, Content: View>: View {
@@ -391,9 +392,12 @@ struct ItemIcon: View {
     var size: CGFloat = 28
 
     var body: some View {
-        LCUImage(path: id > 0 ? model.gameData.items[id]?.iconPath : nil, size: size, corner: 5)
+        let item = model.gameData.items[id]
+        LCUImage(path: id > 0 ? item?.iconPath : nil, size: size, corner: 5)
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.hairline))
-            .help(model.gameData.items[id].map { "\($0.name) · \($0.priceTotal ?? 0) g" } ?? "")
+            .gameTooltip(id: "item\(id)", title: item?.name ?? "",
+                         subtitle: (item?.priceTotal).map { tr("%@ gold", compact(Double($0))) },
+                         text: item?.description?.gameText ?? "")
     }
 }
 
@@ -403,9 +407,10 @@ struct PerkIcon: View {
     var size: CGFloat = 26
 
     var body: some View {
-        let path = model.gameData.perks[id]?.iconPath ?? model.gameData.styles[id]?.iconPath
-        LCUImage(path: path, size: size, corner: size / 2, fill: .clear)
-            .help(model.gameData.perks[id].map { "\($0.name)\n\($0.shortDesc?.strippingTags ?? "")" } ?? model.gameData.styles[id]?.name ?? "")
+        let perk = model.gameData.perks[id]
+        LCUImage(path: perk?.iconPath ?? model.gameData.styles[id]?.iconPath, size: size, corner: size / 2, fill: .clear)
+            .gameTooltip(id: "perk\(id)", title: perk?.name ?? model.gameData.styles[id]?.name ?? "",
+                         text: (perk?.longDesc ?? perk?.shortDesc)?.gameText ?? "")
     }
 }
 
@@ -415,8 +420,9 @@ struct SpellIcon: View {
     var size: CGFloat = 24
 
     var body: some View {
-        LCUImage(path: model.gameData.spells[id]?.iconPath, size: size, corner: 5)
-            .help(model.gameData.spells[id]?.name ?? "")
+        let spell = model.gameData.spells[id]
+        LCUImage(path: spell?.iconPath, size: size, corner: 5)
+            .gameTooltip(id: "spell\(id)", title: spell?.name ?? "", text: spell?.description?.gameText ?? "")
     }
 }
 
@@ -490,5 +496,15 @@ extension String {
     var strippingTags: String {
         replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
             .replacingOccurrences(of: "&nbsp;", with: " ")
+    }
+
+    /// Game text with its markup turned into plain lines.
+    var gameText: String {
+        replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "<li>", with: "\n", options: .caseInsensitive)
+            .strippingTags
+            .replacingOccurrences(of: "[ \t]+\n", with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

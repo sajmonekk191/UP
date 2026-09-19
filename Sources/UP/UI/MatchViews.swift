@@ -307,6 +307,7 @@ private struct GradePill: View {
 /// All players of one match with their grades, damage and gold; the client's list games are completed on demand.
 struct MatchDetail: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openPlayer) private var openPlayer
     let source: HistoryGame
     let focusPuuid: String?
     @State private var game: HistoryGame?
@@ -395,31 +396,45 @@ struct MatchDetail: View {
             ForEach(players, id: \.participantId) { p in
                 let identity = game.identity(for: p.participantId)
                 let focused = identity?.puuid == focusPuuid
-                HStack(spacing: 8) {
-                    ChampionIcon(id: p.championId, size: 30, ring: focused ? Theme.gold : nil)
-                    HStack(spacing: 2) { SpellIcon(id: p.spell1Id ?? 0, size: 15); SpellIcon(id: p.spell2Id ?? 0, size: 15) }
-                    PerkIcon(id: p.stats.perk0 ?? 0, size: 18)
-                    Text(identity.map { $0.riotId.isEmpty ? tr("Bot") : $0.riotId } ?? "?")
-                        .font(.callout.weight(focused ? .semibold : .regular)).foregroundStyle(focused ? Theme.gold : Theme.text)
-                        .lineLimit(1).frame(minWidth: 80, maxWidth: 170, alignment: .leading)
-                    GradePill(score: scores[p.participantId ?? 0])
-                    Text("\(p.stats.kills ?? 0)/\(p.stats.deaths ?? 0)/\(p.stats.assists ?? 0)").font(.callout.monospacedDigit()).foregroundStyle(Theme.text)
-                        .frame(width: 66, alignment: .leading)
-                    Text("KP \(percent(Double((p.stats.kills ?? 0) + (p.stats.assists ?? 0)) / Double(teamKills), digits: 0))")
-                        .frame(width: 50, alignment: .leading)
-                    Text("\(p.stats.cs) CS").frame(width: 50, alignment: .leading)
-                    Text(tr("%@ dmg", compact(Double(p.stats.totalDamageDealtToChampions ?? 0)))).frame(width: 64, alignment: .leading)
-                    Text(tr("%d vis", p.stats.visionScore ?? 0)).foregroundStyle(Theme.textMuted).frame(width: 42, alignment: .leading)
-                    HStack(spacing: 2) { ForEach(Array(p.stats.items.enumerated()), id: \.offset) { ItemIcon(id: $0.element, size: 20) } }
-                    Spacer(minLength: 0)
+                let riotId = identity?.riotId ?? ""
+                if riotId.isEmpty {
+                    playerRow(p, identity: identity, focused: focused, teamKills: teamKills)
+                } else {
+                    Button { openPlayer?(PlayerQuery(riotId: riotId, region: model.searchRegion)) } label: {
+                        playerRow(p, identity: identity, focused: focused, teamKills: teamKills)
+                            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain).handCursor()
+                    .help(tr("Open the profile of %@", riotId))
                 }
-                .font(.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary)
-                .padding(.vertical, 3).padding(.horizontal, 6)
-                .background(focused ? Theme.gold.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(10)
         .background((isMine ? Theme.ally : Theme.enemy).opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func playerRow(_ p: HistoryParticipant, identity: ParticipantIdentity.Player?, focused: Bool, teamKills: Int) -> some View {
+        HStack(spacing: 8) {
+            ChampionIcon(id: p.championId, size: 30, ring: focused ? Theme.gold : nil)
+            HStack(spacing: 2) { SpellIcon(id: p.spell1Id ?? 0, size: 15); SpellIcon(id: p.spell2Id ?? 0, size: 15) }
+            PerkIcon(id: p.stats.perk0 ?? 0, size: 18)
+            Text(identity.map { $0.riotId.isEmpty ? tr("Bot") : $0.riotId } ?? "?")
+                .font(.callout.weight(focused ? .semibold : .regular)).foregroundStyle(focused ? Theme.gold : Theme.text)
+                .lineLimit(1).frame(minWidth: 80, maxWidth: 170, alignment: .leading)
+            GradePill(score: scores[p.participantId ?? 0])
+            Text("\(p.stats.kills ?? 0)/\(p.stats.deaths ?? 0)/\(p.stats.assists ?? 0)").font(.callout.monospacedDigit()).foregroundStyle(Theme.text)
+                .frame(width: 66, alignment: .leading)
+            Text("KP \(percent(Double((p.stats.kills ?? 0) + (p.stats.assists ?? 0)) / Double(teamKills), digits: 0))")
+                .frame(width: 50, alignment: .leading)
+            Text("\(p.stats.cs) CS").frame(width: 50, alignment: .leading)
+            Text(tr("%@ dmg", compact(Double(p.stats.totalDamageDealtToChampions ?? 0)))).frame(width: 64, alignment: .leading)
+            Text(tr("%d vis", p.stats.visionScore ?? 0)).foregroundStyle(Theme.textMuted).frame(width: 42, alignment: .leading)
+            HStack(spacing: 2) { ForEach(Array(p.stats.items.enumerated()), id: \.offset) { ItemIcon(id: $0.element, size: 20) } }
+            Spacer(minLength: 0)
+        }
+        .font(.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary)
+        .padding(.vertical, 3).padding(.horizontal, 6)
+        .background(focused ? Theme.gold.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func objective(_ symbol: String, _ count: Int?, _ help: String) -> some View {

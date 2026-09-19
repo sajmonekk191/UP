@@ -12,6 +12,7 @@ final class GameData {
     private(set) var styles: [Int: PerkStyleList.Style] = [:]
     private(set) var items: [Int: ItemInfo] = [:]
     private(set) var spells: [Int: SummonerSpellInfo] = [:]
+    private(set) var augments: [Int: AugmentInfo] = [:]
     private(set) var isLoaded = false
     private(set) var details: [Int: ChampionDetail] = [:]
     @ObservationIgnored private var byKey: [String: ChampionSummary] = [:]
@@ -62,6 +63,12 @@ final class GameData {
         items = Dictionary((await itemList ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         spells = Dictionary((await spellList ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         isLoaded = !champions.isEmpty
+    }
+
+    /// Loads the Arena augments the first time an Arena build needs them.
+    func loadAugments(client: LCUClient?) async {
+        guard augments.isEmpty, let client, let list: [AugmentInfo] = try? await client.get("/lol-game-data/assets/v1/cherry-augments.json") else { return }
+        augments = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
 
     private static func key(_ name: String) -> String { name.lowercased().filter(\.isLetter) }

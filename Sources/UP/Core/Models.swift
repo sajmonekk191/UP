@@ -288,6 +288,7 @@ struct PerkInfo: Decodable, Sendable {
     var name: String
     var iconPath: String?
     var shortDesc: String?
+    var longDesc: String?
 }
 
 struct PerkStyleList: Decodable, Sendable {
@@ -298,15 +299,23 @@ struct PerkStyleList: Decodable, Sendable {
 struct ItemInfo: Decodable, Sendable {
     var id: Int
     var name: String
+    var description: String?
     var priceTotal: Int?
     var iconPath: String?
     var from: [Int]?
     var to: [Int]?
 }
 
+struct AugmentInfo: Decodable, Sendable {
+    var id: Int
+    var nameTRA: String?
+    var augmentSmallIconPath: String?
+}
+
 struct SummonerSpellInfo: Decodable, Sendable {
     var id: Int
     var name: String
+    var description: String?
     var iconPath: String?
 }
 
@@ -377,7 +386,7 @@ struct ChampionDetail: Decodable, Sendable {
         var maxLevel: Int?
         var id: String { spellKey }
     }
-    struct Skin: Decodable, Sendable { var splashPath: String?; var uncenteredSplashPath: String?; var tilePath: String? }
+    struct Skin: Decodable, Sendable { var id: Int?; var name: String?; var splashPath: String?; var uncenteredSplashPath: String?; var tilePath: String? }
 
     var id: Int
     var name: String

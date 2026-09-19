@@ -242,7 +242,7 @@ private struct BuildPage: View {
                     }
                 }
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning) }
-                if let lane, let build, build.lane != lane {
+                if mode == .ranked, let lane, let build, build.lane != lane {
                     Label(tr("Few games as %@, showing %@.", lane.title, build.lane?.title ?? tr("main role")), systemImage: "info.circle.fill")
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -250,7 +250,7 @@ private struct BuildPage: View {
                     LoadingNote(text: tr("Loading the %@ build from op.gg…", model.gameData.championName(championId)))
                     BuildSkeleton()
                 } else {
-                    BuildDetails(build: build, extraRunes: highElo + riotRunes, championId: championId)
+                    BuildDetails(build: build, extraRunes: highElo + riotRunes, championId: championId, showRunes: mode != .arena)
                 }
                 if let build {
                     Button {
@@ -290,7 +290,9 @@ private struct BuildPage: View {
             failure = error.localizedDescription
         }
         var riot: [RuneSetup] = []
-        if let client {
+        if mode == .arena {
+            await model.gameData.loadAugments(client: client)
+        } else if let client {
             riot = (try? await BuildService.riotRecommended(client: client, championId: championId, lane: lane ?? loaded?.availableLanes.first, mapId: mode.mapId)) ?? []
         }
         let elite = Array((await master)?.runes.prefix(2) ?? [])

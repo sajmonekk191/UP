@@ -15,12 +15,35 @@ struct ChampionBuild: Sendable {
         var order: [String]
         var winRate: Double
         var pickRate: Double
+
+        /// Levels 16 to 18, which follow from the earlier ones, added to the order op.gg stops at.
+        static func complete(_ order: [String], priority: [String]) -> [String] {
+            var order = order
+            var taken = order.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
+            let basics = priority.filter { $0 != "R" }
+            guard basics.count == 3, taken["R"] != nil else { return order }
+            while order.count < 18 {
+                let level = order.count + 1
+                let next = level == 16 && (taken["R"] ?? 0) < 3 ? "R" : basics.first { (taken[$0] ?? 0) < 5 }
+                guard let next else { break }
+                order.append(next)
+                taken[next, default: 0] += 1
+            }
+            return order
+        }
     }
     struct Matchup: Sendable, Hashable, Identifiable {
         var championId: Int
         var play: Int
         var winRate: Double
         var id: Int { championId }
+    }
+    /// Arena augment with its rarity: 1 silver, 4 gold, 8 prismatic.
+    struct Augment: Sendable, Hashable, Identifiable {
+        var id: Int
+        var rarity: Int
+        var play: Int
+        var winRate: Double
     }
 
     var championId: Int
@@ -43,6 +66,11 @@ struct ChampionBuild: Sendable {
     var laneShares: [(lane: Lane, share: Double)] = []
     var kda: Double?
     var rank: Int?
+    var augments: [Augment] = []
+    var prismItems: [Stat] = []
+    var duoPartners: [Matchup] = []
+    var firstPlaceRate: Double?
+    var averagePlace: Double?
 }
 
 struct TierListEntry: Sendable, Identifiable, Hashable {
@@ -60,10 +88,22 @@ struct TierListEntry: Sendable, Identifiable, Hashable {
 }
 
 enum QueueMode: String, CaseIterable, Identifiable, Sendable {
-    case ranked, aram
+    case ranked, aram, arena
     var id: String { rawValue }
-    var title: String { self == .ranked ? "Summoner's Rift" : "ARAM" }
-    var mapId: Int { self == .ranked ? 11 : 12 }
+    var title: String {
+        switch self {
+        case .ranked: "Summoner's Rift"
+        case .aram: "ARAM"
+        case .arena: tr("Arena")
+        }
+    }
+    var mapId: Int {
+        switch self {
+        case .ranked: 11
+        case .aram: 12
+        case .arena: 30
+        }
+    }
 }
 
 enum EloTier: String, CaseIterable, Identifiable, Sendable {
@@ -93,8 +133,12 @@ enum BuildService {
     }
 
     private static func fetchBuild(championId: Int, lane: Lane?, mode: QueueMode, tier: EloTier) async throws -> ChampionBuild {
-        let position = mode == .aram ? "none" : (lane?.opggName ?? "mid")
-        let url = URL(string: "\(base)/\(mode.rawValue)/\(championId)/\(position)?tier=\(tier.rawValue)")!
+        let path = switch mode {
+        case .ranked: "\(championId)/\(lane?.opggName ?? "mid")?tier=\(tier.rawValue)"
+        case .aram: "\(championId)/none?tier=\(tier.rawValue)"
+        case .arena: "\(championId)"
+        }
+        let url = URL(string: "\(base)/\(mode.rawValue)/\(path)")!
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -102,7 +146,7 @@ enum BuildService {
             throw BuildError.unavailable(tr("op.gg returned no data (HTTP %d)", (response as? HTTPURLResponse)?.statusCode ?? 0))
         }
         var build = try jsonDecoder.decode(OpggRoot.self, from: data).data.build(championId: championId, requestedLane: lane)
-        guard !build.runes.isEmpty else { throw BuildError.unavailable(tr("op.gg has no data for this champion")) }
+        guard !build.runes.isEmpty || !build.augments.isEmpty else { throw BuildError.unavailable(tr("op.gg has no data for this champion")) }
         if tier != .emeraldPlus {
             build.runes = build.runes.map { var r = $0; r.source = tier.title; return r }
         }
@@ -199,6 +243,12 @@ private struct OpggTrends: Decodable {
 }
 private struct OpggStats: Decodable {
     var play: Int?
+    var win: Int?
+    var first_place: Int?
+    var total_place: Int?
+    var kills: Int?
+    var deaths: Int?
+    var assists: Int?
     var kda: Double?
     var role_rate: Double?
     var win_rate: Double?
@@ -239,6 +289,11 @@ private struct OpggSkill: Decodable {
     var builds: [Build]?
 }
 private struct OpggCounter: Decodable { var champion_id: Int; var play: Int?; var win: Int? }
+private struct OpggAugmentGroup: Decodable {
+    struct Augment: Decodable { var id: Int; var play: Int?; var win: Int? }
+    var rarity: Int
+    var augments: [Augment]?
+}
 private struct OpggChampion: Decodable {
     var summary: OpggSummary?
     var summoner_spells: [OpggStat]?
@@ -249,6 +304,9 @@ private struct OpggChampion: Decodable {
     var runes: [OpggRune]?
     var skill_masteries: [OpggSkill]?
     var counters: [OpggCounter]?
+    var synergies: [OpggCounter]?
+    var prism_items: [OpggStat]?
+    var augment_group: [OpggAugmentGroup]?
     var game_lengths: [OpggGameLength]?
     var trends: OpggTrends?
 
@@ -268,17 +326,19 @@ private struct OpggChampion: Decodable {
         let skill = skill_masteries?.first.flatMap { mastery -> ChampionBuild.SkillOrder? in
             guard let build = mastery.builds?.first else { return nil }
             let win = Double(build.win ?? 0) / Double(max(build.play ?? 1, 1))
-            return .init(priority: mastery.ids, order: build.order, winRate: win, pickRate: mastery.pick_rate ?? 0)
+            return .init(priority: mastery.ids, order: ChampionBuild.SkillOrder.complete(build.order, priority: mastery.ids),
+                         winRate: win, pickRate: mastery.pick_rate ?? 0)
         }
 
         let matchups = (counters ?? []).compactMap { c -> ChampionBuild.Matchup? in
             guard let play = c.play, play >= 50 else { return nil }
             return .init(championId: c.champion_id, play: play, winRate: Double(c.win ?? 0) / Double(play))
         }
+        let games = Double(max(stats?.play ?? 0, 1))
 
         var result = ChampionBuild(
             championId: championId, lane: lanes.contains { $0 == requestedLane } ? requestedLane : lanes.first,
-            winRate: stats?.win_rate, pickRate: stats?.pick_rate, banRate: stats?.ban_rate,
+            winRate: stats?.win_rate ?? stats?.win.map { Double($0) / games }, pickRate: stats?.pick_rate, banRate: stats?.ban_rate,
             tier: stats?.tier_data?.tier ?? stats?.tier,
             runes: runeSetups,
             spells: (summoner_spells ?? []).compactMap(\.model),
@@ -294,8 +354,19 @@ private struct OpggChampion: Decodable {
         result.laneShares = (summary?.positions ?? []).compactMap { pos in
             Lane(clientPosition: pos.name).map { ($0, pos.stats?.role_rate ?? 0) }
         }
-        result.kda = stats?.kda
+        let takedowns = Double((stats?.kills ?? 0) + (stats?.assists ?? 0))
+        result.kda = stats?.kda ?? stats?.deaths.map { takedowns / Double(max($0, 1)) }
         result.rank = stats?.tier_data?.rank
+        result.augments = (augment_group ?? []).flatMap { group in
+            (group.augments ?? []).map { ChampionBuild.Augment(id: $0.id, rarity: group.rarity, play: $0.play ?? 0, winRate: Double($0.win ?? 0) / Double(max($0.play ?? 0, 1))) }
+        }
+        result.prismItems = (prism_items ?? []).compactMap(\.model)
+        result.duoPartners = (synergies ?? []).compactMap { c -> ChampionBuild.Matchup? in
+            guard let play = c.play, play >= 50 else { return nil }
+            return .init(championId: c.champion_id, play: play, winRate: Double(c.win ?? 0) / Double(play))
+        }
+        result.firstPlaceRate = stats?.first_place.map { Double($0) / games }
+        result.averagePlace = stats?.total_place.map { Double($0) / games }
         return result
     }
 }
