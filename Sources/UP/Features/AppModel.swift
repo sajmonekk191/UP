@@ -21,6 +21,7 @@ final class AppModel {
     let settings = AppSettings()
     let gameData = GameData()
     let advisor = DraftAdvisor()
+    let hud = HUDState()
     private let scout = PlayerScout()
 
     private(set) var connection: ConnectionState = .searching
@@ -28,6 +29,8 @@ final class AppModel {
     private(set) var me: Summoner?
     private(set) var myProfile: PlayerProfile?
     private(set) var myMasteries: [ChampionMastery] = []
+    private(set) var myPerformance: [Int: GamePerformance] = [:]
+    private(set) var isGrading = false
     private(set) var phase = "None"
     private(set) var logs: [LogEntry] = []
 
@@ -36,6 +39,11 @@ final class AppModel {
     private(set) var gameSession: GameflowSession?
     private(set) var live: LiveGameSnapshot?
     private(set) var isPreview = false
+    private(set) var isHUDPreview = false
+    private(set) var friends: [Friend] = []
+    private(set) var recentPlayers: [String] = UserDefaults.standard.stringArray(forKey: "recentPlayers") ?? []
+    var hudMode: HUDMode = .hud
+    var hudClosed = false
 
     private var liveTask: Task<Void, Never>?
     private var lastImportKey: String?
@@ -77,6 +85,7 @@ final class AppModel {
         if !gameData.isLoaded { await gameData.load(using: client) }
         await refreshPhase()
         Task { await refreshMyProfile() }
+        Task { friends = (try? await client.get("/lol-chat/v1/friends")) ?? [] }
 
         let socket = LCUWebSocket(credentials: credentials)
         do {
@@ -92,6 +101,9 @@ final class AppModel {
         await scout.invalidate()
         myProfile = await scout.profile(puuid: me.puuid, client: client, historyCount: 20)
         myMasteries = (try? await client.get("/lol-champion-mastery/v1/local-player/champion-mastery")) ?? []
+        isGrading = true
+        myPerformance = await scout.performances(of: myProfile?.recent ?? [], puuid: me.puuid, client: client)
+        isGrading = false
     }
 
     private func refreshPhase() async {
@@ -138,6 +150,7 @@ final class AppModel {
         case "InProgress", "Reconnect":
             gameSession = try? await client?.get("/lol-gameflow/v1/session")
             startLiveTracking()
+            Task { await scoutGamePlayers() }
         case "EndOfGame", "WaitingForStats", "PreEndOfGame":
             stopLiveTracking()
             if newPhase == "EndOfGame" {
@@ -264,8 +277,21 @@ final class AppModel {
         }
     }
 
+    private func scoutGamePlayers() async {
+        let players = (gameSession?.gameData?.teamOne ?? []) + (gameSession?.gameData?.teamTwo ?? [])
+        await scoutTeam(players.compactMap(\.puuid).filter { !$0.isEmpty })
+    }
+
     func profile(for puuid: String?) -> PlayerProfile? {
         puuid.flatMap { teamProfiles[$0] }
+    }
+
+    /// Remembers a successfully looked-up Riot ID for search suggestions.
+    func rememberPlayer(_ riotId: String) {
+        recentPlayers.removeAll { $0.caseInsensitiveCompare(riotId) == .orderedSame }
+        recentPlayers.insert(riotId, at: 0)
+        recentPlayers = Array(recentPlayers.prefix(12))
+        UserDefaults.standard.set(recentPlayers, forKey: "recentPlayers")
     }
 
     func lookupPlayer(riotId: String) async -> PlayerProfile? {
@@ -341,11 +367,24 @@ final class AppModel {
 
     private func startLiveTracking() {
         guard liveTask == nil else { return }
+        hud.reset()
+        hudClosed = false
+        hudMode = .hud
         liveTask = Task {
+            var lastError: String?
             while !Task.isCancelled {
-                if let data = try? await LiveClient.allGameData() {
-                    live = LiveGameAnalyzer.analyze(data, items: gameData.items)
-                }
+                do {
+                    let data = try await LiveClient.allGameData()
+                    lastError = nil
+                    if data.gameData.gameTime > 1 {
+                        let snapshot = LiveGameAnalyzer.analyze(data, items: gameData.items)
+                        live = snapshot
+                        hud.ingest(snapshot, model: self)
+                    }
+                } catch is DecodingError {
+                    let message = tr("Game data could not be read, the HUD is paused")
+                    if lastError != message { log(message, .warning); lastError = message }
+                } catch {}
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -355,6 +394,32 @@ final class AppModel {
         liveTask?.cancel()
         liveTask = nil
         live = nil
+        isHUDPreview = false
+        hud.reset()
+    }
+
+    /// Runs a scripted sample game through the in-game HUD for about a minute.
+    func startHUDPreview() {
+        guard liveTask == nil || isHUDPreview else { return log(tr("A game is running, the HUD is already live"), .info) }
+        liveTask?.cancel()
+        isHUDPreview = true
+        hudMode = .hud
+        hud.reset()
+        liveTask = Task {
+            for elapsed in 0..<75 {
+                guard !Task.isCancelled else { return }
+                let snapshot = LiveGameAnalyzer.analyze(HUDPreview.data(elapsed: Double(elapsed)), items: gameData.items)
+                live = snapshot
+                hud.ingest(snapshot, model: self)
+                try? await Task.sleep(for: .seconds(1))
+            }
+            stopLiveTracking()
+        }
+    }
+
+    func endHUDPreview() {
+        guard isHUDPreview else { return }
+        stopLiveTracking()
     }
 
     // MARK: Tools

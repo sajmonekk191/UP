@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Renders Resources/AppIcon.icns and docs/icon.png from scripts/make-icon.swift
+# Renders Resources/AppIcon.icns and docs/icon.png from scripts/make-icon/main.swift
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift scripts/make-icon.swift
+swiftc -O -o .build/make-icon scripts/make-icon/main.swift Sources/UP/UI/Logo.swift && .build/make-icon
 cd Resources/AppIcon.iconset
 for s in 16 32 128 256 512; do
   sips -z $s $s icon_512x512@2x.png --out icon_${s}x${s}.png >/dev/null

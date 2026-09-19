@@ -62,7 +62,9 @@ struct PlayerProfile: Sendable, Identifiable {
     }
 
     var id: String { puuid }
-    var recentGames: [HistoryGame] { recent.filter(\.isCountable) }
+    /// True when none of the recent games are real matches, so stats fall back to Practice Tool and custom games.
+    var usesPracticeGames: Bool { !recent.isEmpty && !recent.contains(where: \.isCountable) }
+    var recentGames: [HistoryGame] { usesPracticeGames ? recent.filter { !$0.isRemake } : recent.filter(\.isCountable) }
     var recentWins: Int { recentGames.filter { $0.me?.stats.win == true }.count }
     var recentWinRate: Double? { recentGames.isEmpty ? nil : Double(recentWins) / Double(recentGames.count) }
 
@@ -92,6 +94,7 @@ struct PlayerProfile: Sendable, Identifiable {
 /// Loads and caches player profiles through the League client.
 actor PlayerScout {
     private var cache: [String: (date: Date, profile: PlayerProfile)] = [:]
+    private var details: [Int: HistoryGame] = [:]
 
     func profile(puuid: String, client: LCUClient, historyCount: Int = 20) async -> PlayerProfile {
         if let hit = cache[puuid], Date().timeIntervalSince(hit.date) < 300 { return hit.profile }
@@ -107,10 +110,10 @@ actor PlayerScout {
         let rankedStats = await ranked
         var profile = PlayerProfile(puuid: puuid, summoner: await summoner,
                                     solo: rankedStats?.solo, flex: rankedStats?.flex,
-                                    recent: games, champions: Self.championRecords(games))
-        profile.masteries = Array((await mastery ?? []).sorted { ($0.championPoints ?? 0) > ($1.championPoints ?? 0) }.prefix(10))
+                                    recent: games, champions: Self.championRecords(games.contains(where: \.isCountable) ? games.filter(\.isCountable) : games))
+        profile.masteries = (await mastery ?? []).sorted { ($0.championPoints ?? 0) > ($1.championPoints ?? 0) }
         profile.highest = rankedStats?.highestRankedEntrySR
-        profile.tags = Self.tags(for: profile)
+        profile.tags = profile.usesPracticeGames ? [] : Self.tags(for: profile)
         cache[puuid] = (Date(), profile)
         return profile
     }
@@ -119,12 +122,30 @@ actor PlayerScout {
 
     /// Full 10-player details of one match.
     func game(_ gameId: Int, client: LCUClient) async -> HistoryGame? {
-        try? await client.get("/lol-match-history/v1/games/\(gameId)")
+        if let cached = details[gameId] { return cached }
+        let game: HistoryGame? = try? await client.get("/lol-match-history/v1/games/\(gameId)")
+        details[gameId] = game
+        return game
+    }
+
+    /// Grades the player in each game against everyone else in that match.
+    func performances(of recent: [HistoryGame], puuid: String, client: LCUClient) async -> [Int: GamePerformance] {
+        await withTaskGroup(of: (Int, GamePerformance?).self) { group in
+            for game in recent where !game.isRemake {
+                group.addTask {
+                    let detail = await self.game(game.gameId, client: client)
+                    return (game.gameId, GamePerformance(game: detail ?? game, puuid: puuid))
+                }
+            }
+            var result: [Int: GamePerformance] = [:]
+            for await (id, performance) in group { result[id] = performance }
+            return result
+        }
     }
 
     private static func championRecords(_ games: [HistoryGame]) -> [PlayerProfile.ChampionRecord] {
         var records: [Int: PlayerProfile.ChampionRecord] = [:]
-        for game in games where game.isCountable {
+        for game in games where !game.isRemake {
             guard let me = game.me else { continue }
             var r = records[me.championId] ?? .init(championId: me.championId, games: 0, wins: 0, kills: 0, deaths: 0, assists: 0)
             r.games += 1

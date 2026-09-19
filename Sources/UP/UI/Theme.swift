@@ -140,3 +140,20 @@ struct Segmented<Value: Hashable>: View {
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Theme.hairline))
     }
 }
+
+/// Switch that shows its state in the accent colour even when the window is inactive.
+struct PillToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                Capsule().fill(configuration.isOn ? Theme.accent : Theme.raised)
+                    .overlay(Capsule().strokeBorder(configuration.isOn ? Theme.accentBright.opacity(0.5) : Theme.hairlineStrong))
+                Circle().fill(.white).padding(2).shadow(color: .black.opacity(0.3), radius: 1, y: 1)
+            }
+            .frame(width: 32, height: 18)
+            .animation(.snappy(duration: 0.15), value: configuration.isOn)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? Text("On") : Text("Off"))
+    }
+}

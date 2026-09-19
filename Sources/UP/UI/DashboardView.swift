@@ -2,7 +2,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(AppModel.self) private var model
-    var openChampSelect: () -> Void
+    var showHistory: () -> Void
 
     var body: some View {
         Screen(title: tr("Overview"), subtitle: model.connection != .connected ? tr("Waiting for the League client…") : model.phase == "None" ? tr("Connected to the client") : tr("Connected to the client · %@", model.phaseTitle)) {
@@ -11,26 +11,31 @@ struct DashboardView: View {
         } content: {
             profileHero
             if let profile = model.myProfile {
+                if profile.usesPracticeGames {
+                    Label(tr("Your last %d games are all Practice Tool or custom games, so the stats below come from them. The client only shares your 20 most recent games; play a real match to see normal and ranked stats.", profile.recent.count), systemImage: "info.circle.fill")
+                        .font(.callout).foregroundStyle(Theme.textSecondary)
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .panelBackground(Theme.accentDeep.opacity(0.25), radius: 12)
+                }
                 statTiles(profile)
                 HStack(alignment: .top, spacing: Theme.gap) {
-                    VStack(spacing: Theme.gap) {
-                        DraftAssistantCard(openChampSelect: openChampSelect)
-                        championsPanel(profile)
-                        rolesPanel(profile)
-                    }
+                    RecentMatchesPanel(games: Array(profile.recent.filter { !$0.isRemake }.prefix(8)), showAll: showHistory)
+                        .environment(\.panelFillsHeight, true)
                     VStack(spacing: Theme.gap) {
                         AutomationPanel()
                         masteryPanel
+                        championsPanel(profile).environment(\.panelFillsHeight, true)
                     }
                     .frame(width: 360)
                 }
+                .fixedSize(horizontal: false, vertical: true)
             }
-            LogView()
         }
     }
 
     private var profileHero: some View {
-        let splash = model.myProfile?.champions.first.flatMap { model.gameData.details[$0.championId]?.splashPath }
+        let splashChampion = model.myProfile?.champions.first?.championId ?? model.myMasteries.first?.championId
+        let splash = splashChampion.flatMap { model.gameData.details[$0]?.splashPath }
         return HeroBanner(splashPath: splash, height: 190) {
             HStack(alignment: .center, spacing: 18) {
                 LCUImage(path: model.me?.profileIconId.map { "/lol-game-data/assets/v1/profile-icons/\($0).jpg" }, size: 84, corner: 42)
@@ -62,27 +67,34 @@ struct DashboardView: View {
                 }
             }
         }
-        .task(id: model.myProfile?.champions.first?.championId) {
-            if let id = model.myProfile?.champions.first?.championId { _ = await model.gameData.detail(id, client: model.client) }
+        .task(id: splashChampion) {
+            if let id = splashChampion { _ = await model.gameData.detail(id, client: model.client) }
         }
     }
 
     private func statTiles(_ profile: PlayerProfile) -> some View {
         let a = profile.averages
         let kda = profile.averageKDA
+        let hasGames = !profile.recentGames.isEmpty
         let today = profile.recentGames.filter { Calendar.current.isDateInToday($0.date ?? .distantPast) }
         let todayWins = today.filter { $0.me?.stats.win == true }.count
+        func value(_ text: String) -> String { hasGames ? text : "—" }
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
-            StatTile(label: tr("Win rate"), value: percent(profile.recentWinRate, digits: 0),
-                     sub: tr("%dW / %dL", profile.recentWins, profile.recentGames.count - profile.recentWins), valueColor: winRateColor(profile.recentWinRate),
-                     trend: rollingWinRate(profile))
-            StatTile(label: tr("Today"), value: today.isEmpty ? "—" : tr("%dW %dL", todayWins, today.count - todayWins),
-                     sub: today.isEmpty ? tr("No games yet") : tr("%d games today", today.count))
-            StatTile(label: "KDA", value: decimal((kda.k + kda.a) / max(kda.d, 1), 2),
-                     sub: "\(decimal(kda.k)) / \(decimal(kda.d)) / \(decimal(kda.a))")
-            StatTile(label: tr("CS / min"), value: decimal(a.csPerMin, 1), sub: tr("farm per minute"))
-            StatTile(label: tr("Dmg / min"), value: compact(a.damagePerMin), sub: tr("to champions"))
-            StatTile(label: tr("Vision / min"), value: decimal(a.visionPerMin, 2), sub: tr("%d multikills", a.multikills))
+            if profile.usesPracticeGames {
+                StatTile(label: tr("Win rate"), value: "—", sub: tr("Practice games have no result"))
+                StatTile(label: tr("Today"), value: today.isEmpty ? "—" : "\(today.count)", sub: today.isEmpty ? tr("No games yet") : tr("games played today"))
+            } else {
+                StatTile(label: tr("Win rate"), value: value(percent(profile.recentWinRate, digits: 0)),
+                         sub: tr("%dW / %dL", profile.recentWins, profile.recentGames.count - profile.recentWins), valueColor: winRateColor(profile.recentWinRate),
+                         trend: rollingWinRate(profile))
+                StatTile(label: tr("Today"), value: today.isEmpty ? "—" : tr("%dW / %dL", todayWins, today.count - todayWins),
+                         sub: today.isEmpty ? tr("No games yet") : tr("%d games today", today.count))
+            }
+            StatTile(label: "KDA", value: value(decimal((kda.k + kda.a) / max(kda.d, 1), 2)),
+                     sub: hasGames ? "\(decimal(kda.k)) / \(decimal(kda.d)) / \(decimal(kda.a))" : tr("No games yet"))
+            StatTile(label: tr("CS / min"), value: value(decimal(a.csPerMin, 1)), sub: tr("farm per minute"))
+            StatTile(label: tr("Dmg / min"), value: value(compact(a.damagePerMin)), sub: tr("to champions"))
+            StatTile(label: tr("Vision / min"), value: value(decimal(a.visionPerMin, 2)), sub: tr("vision score per minute"))
         }
     }
 
@@ -96,34 +108,33 @@ struct DashboardView: View {
     }
 
     private func championsPanel(_ profile: PlayerProfile) -> some View {
-        Panel(title: tr("Most played champions"), symbol: "person.crop.square.filled.and.at.rectangle") {
+        let mostGames = Double(max(profile.champions.first?.games ?? 1, 1))
+        return Panel(title: tr("Most played champions"), symbol: "person.crop.square.filled.and.at.rectangle") {
             if profile.champions.isEmpty {
-                Text(tr("No countable games.")).foregroundStyle(Theme.textSecondary)
+                Text(tr("No countable games.")).font(.callout).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(profile.champions.prefix(6)) { record in
-                HStack(spacing: 12) {
-                    ChampionIcon(id: record.championId, size: 36)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.gameData.championName(record.championId)).font(.callout.weight(.semibold)).foregroundStyle(Theme.text)
-                        Text("\(decimal(record.kda, 2)) KDA").font(.caption).foregroundStyle(Theme.textSecondary)
+            VStack(spacing: 10) {
+                ForEach(profile.champions.prefix(5)) { record in
+                    HStack(spacing: 10) {
+                        ChampionIcon(id: record.championId, size: 30)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(model.gameData.championName(record.championId)).font(.callout.weight(.semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                            Text(profile.usesPracticeGames ? "\(decimal(record.kda, 2)) KDA" : "\(decimal(record.kda, 2)) KDA · \(gamesLabel(record.games))")
+                                .font(.caption2).foregroundStyle(Theme.textMuted).lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            if profile.usesPracticeGames {
+                                Text(gamesLabel(record.games)).font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                                Meter(value: Double(record.games) / mostGames, height: 4).frame(width: 72)
+                            } else {
+                                let ahead = record.winRate >= 0.495
+                                Text(percent(record.winRate, digits: 0)).font(.caption.weight(.semibold)).foregroundStyle(winRateColor(record.winRate))
+                                Meter(value: record.winRate, tint: ahead ? Theme.win : Theme.loss, track: ahead ? Theme.accentTrack : Theme.lossTrack, height: 4, marker: 0.5)
+                                    .frame(width: 72)
+                            }
+                        }
                     }
-                    .frame(width: 150, alignment: .leading)
-                    WinRateMeter(winRate: record.winRate, games: record.games)
-                }
-            }
-        }
-    }
-
-    private func rolesPanel(_ profile: PlayerProfile) -> some View {
-        Panel(title: tr("Roles in recent games"), symbol: "map") {
-            if profile.roleShares.isEmpty {
-                Text(tr("The client does not report roles for these games.")).foregroundStyle(Theme.textSecondary)
-            }
-            ForEach(profile.roleShares, id: \.lane) { role in
-                HStack(spacing: 10) {
-                    Label(role.lane.title, systemImage: role.lane.symbol).font(.callout).foregroundStyle(Theme.text).frame(width: 110, alignment: .leading)
-                    Meter(value: role.share)
-                    Text(percent(role.share, digits: 0)).font(.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary).frame(width: 40, alignment: .trailing)
                 }
             }
         }
@@ -144,39 +155,6 @@ struct DashboardView: View {
     }
 }
 
-/// Explains the champ select window and lets the user open or preview it.
-struct DraftAssistantCard: View {
-    @Environment(AppModel.self) private var model
-    var openChampSelect: () -> Void
-
-    var body: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle().fill(Theme.accentDeep.opacity(0.5)).frame(width: 52, height: 52)
-                Image(systemName: model.isInChampSelect ? "person.2.fill" : "binoculars.fill").font(.title3).foregroundStyle(Theme.accentBright)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(model.isInChampSelect ? tr("Champ select is live") : tr("Champ select assistant")).font(.headline).foregroundStyle(Theme.text)
-                Text(model.isInChampSelect
-                     ? tr("Best picks, counters, bans and your game plan are ready.")
-                     : tr("Waiting for your next draft. The assistant window opens by itself with best picks, counters, bans and runes."))
-                    .font(.callout).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            if model.isInChampSelect {
-                Button(tr("Open"), action: openChampSelect).buttonStyle(.primary)
-            } else {
-                Button(tr("Preview")) { model.startPreview(); openChampSelect() }.buttonStyle(.secondary)
-                    .disabled(model.connection != .connected)
-            }
-        }
-        .padding(16)
-        .background(LinearGradient(colors: [Theme.accentDeep.opacity(0.45), Theme.surface], startPoint: .leading, endPoint: .trailing),
-                    in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.accent.opacity(0.35)))
-    }
-}
-
 struct AutomationPanel: View {
     @Environment(AppModel.self) private var model
 
@@ -190,7 +168,7 @@ struct AutomationPanel: View {
                 toggle(tr("Summoner spells"), "sparkles", $settings.autoSpells)
                 toggle(tr("Item sets"), "bag", $settings.autoItemSets)
                 toggle(tr("Scout teammates"), "person.2", $settings.scoutTeam)
-                toggle(tr("In-game overlay"), "rectangle.on.rectangle", $settings.showOverlay)
+                toggle(tr("In-game HUD"), "rectangle.on.rectangle", $settings.showOverlay)
                 toggle(tr("Sounds"), "speaker.wave.2", $settings.soundAlerts)
             }
         }
@@ -201,44 +179,7 @@ struct AutomationPanel: View {
             Image(systemName: symbol).font(.callout).foregroundStyle(Theme.accentBright).frame(width: 20)
             Text(title).font(.callout).foregroundStyle(Theme.text)
             Spacer()
-            Toggle(title, isOn: binding).labelsHidden().toggleStyle(.switch).controlSize(.small)
-        }
-    }
-}
-
-struct LogView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        Panel(title: tr("Activity"), symbol: "waveform.path.ecg") {
-            if model.logs.isEmpty {
-                Text(tr("No activity yet.")).foregroundStyle(Theme.textSecondary)
-            }
-            ForEach(model.logs.prefix(12)) { entry in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: icon(entry.kind)).foregroundStyle(color(entry.kind)).font(.caption)
-                    Text(entry.text).font(.callout).foregroundStyle(Theme.text).textSelection(.enabled)
-                    Spacer()
-                    Text(entry.date, format: .dateTime.hour().minute().second())
-                        .font(.caption.monospacedDigit()).foregroundStyle(Theme.textMuted)
-                }
-            }
-        }
-    }
-
-    private func icon(_ kind: LogEntry.Kind) -> String {
-        switch kind {
-        case .info: "info.circle.fill"
-        case .success: "checkmark.circle.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private func color(_ kind: LogEntry.Kind) -> Color {
-        switch kind {
-        case .info: Theme.accentBright
-        case .success: Theme.good
-        case .warning: Theme.warning
+            Toggle(title, isOn: binding).labelsHidden().toggleStyle(PillToggleStyle())
         }
     }
 }

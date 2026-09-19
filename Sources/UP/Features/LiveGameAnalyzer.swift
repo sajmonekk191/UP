@@ -53,7 +53,24 @@ struct LiveGameSnapshot: Sendable {
     var ally: TeamSummary
     var enemy: TeamSummary
     var alerts: [ItemAlert]
-    var inhibitors: [(name: String, respawnAt: Double)]
+    var inhibitors: [Inhibitor]
+
+    struct Inhibitor: Sendable, Hashable, Identifiable {
+        var lane: String
+        var ours: Bool
+        var respawnAt: Double
+        var id: String { "\(ours)-\(lane)" }
+        var name: String {
+            switch (ours, lane) {
+            case (true, "top"): tr("Our top inhibitor")
+            case (true, "mid"): tr("Our mid inhibitor")
+            case (true, _): tr("Our bot inhibitor")
+            case (false, "top"): tr("Enemy top inhibitor")
+            case (false, "mid"): tr("Enemy mid inhibitor")
+            case (false, _): tr("Enemy bot inhibitor")
+            }
+        }
+    }
 
     var goldDiff: Int { ally.itemGold - enemy.itemGold }
 }
@@ -116,7 +133,7 @@ enum LiveGameAnalyzer {
         }
 
         var lastDragon: LiveEvent?, lastBaron: LiveEvent?
-        var inhibitors: [String: Double] = [:]
+        var inhibitors: [String: (respawnAt: Double, ours: Bool)] = [:]
         for event in data.events.Events {
             let killerTeam = team(of: event.KillerName)
             func credit(_ update: (inout LiveGameSnapshot.TeamSummary) -> Void) {
@@ -133,7 +150,10 @@ enum LiveGameAnalyzer {
             case "HordeKill": credit { $0.grubs += 1 }
             case "TurretKilled": credit { $0.towers += 1 }
             case "InhibKilled":
-                if let inhib = event.InhibKilled { inhibitors[inhib] = event.EventTime + inhibitorRespawn }
+                if let inhib = event.InhibKilled {
+                    let ours = killerTeam.map { $0 != myTeam } ?? (inhib.contains("T1") == (myTeam == "ORDER"))
+                    inhibitors[inhib] = (event.EventTime + inhibitorRespawn, ours)
+                }
             case "InhibRespawned":
                 if let inhib = event.InhibKilled { inhibitors[inhib] = nil }
             default: break
@@ -200,14 +220,10 @@ enum LiveGameAnalyzer {
             me: me, activeStats: data.activePlayer?.championStats, currentGold: data.activePlayer?.currentGold,
             feed: Array(feed.prefix(15)), myTeam: myTeam,
             players: data.allPlayers, objectives: objectives, ally: ally, enemy: enemy, alerts: alerts,
-            inhibitors: inhibitors.filter { $0.value > time }.map { (Self.inhibitorName($0.key), $0.value) }
-                .sorted { $0.respawnAt < $1.respawnAt })
-    }
-
-    static func inhibitorName(_ raw: String) -> String {
-        let side = raw.contains("T1") ? tr("Blue") : tr("Red")
-        let lane = raw.hasSuffix("L1") ? "top" : raw.hasSuffix("C1") ? "mid" : raw.hasSuffix("R1") ? "bot" : ""
-        return tr("%@ inhib %@", side, lane)
+            inhibitors: inhibitors.filter { $0.value.respawnAt > time }.map { raw, value in
+                let lane = raw.hasSuffix("L1") ? "top" : raw.hasSuffix("C1") ? "mid" : "bot"
+                return LiveGameSnapshot.Inhibitor(lane: lane, ours: value.ours, respawnAt: value.respawnAt)
+            }.sorted { $0.respawnAt < $1.respawnAt })
     }
 }
 

@@ -183,6 +183,19 @@ struct ChampionMastery: Decodable, Hashable, Sendable {
     var lastPlayTime: Double?
 }
 
+struct Friend: Decodable, Hashable, Sendable {
+    var gameName: String?
+    var gameTag: String?
+    var puuid: String?
+    var icon: Int?
+    var availability: String?
+
+    var riotId: String? {
+        guard let gameName, !gameName.isEmpty, let gameTag, !gameTag.isEmpty else { return nil }
+        return "\(gameName)#\(gameTag)"
+    }
+}
+
 // MARK: - Gameflow / champ select
 
 struct ReadyCheck: Decodable, Sendable {
@@ -427,5 +440,5 @@ struct ChampionDetail: Decodable, Sendable {
     var spells: [Spell]
     var skins: [Skin]?
 
-    var splashPath: String? { skins?.first?.uncenteredSplashPath ?? skins?.first?.splashPath }
+    var splashPath: String? { skins?.first?.splashPath ?? skins?.first?.uncenteredSplashPath }
 }

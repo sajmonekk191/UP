@@ -1,37 +1,46 @@
 import SwiftUI
 
-struct LookupView: View {
+/// Profile of a player chosen from the search bar, or recent searches and friends when none is chosen.
+struct PlayerView: View {
     @Environment(AppModel.self) private var model
-    @State private var query = ""
+    @Binding var riotId: String?
     @State private var profile: PlayerProfile?
     @State private var loading = false
     @State private var notFound = false
 
     var body: some View {
-        Screen(title: tr("Player lookup"), subtitle: tr("Searches the server you are logged in to")) {
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-                    TextField(tr("Riot ID, e.g. Faker#KR1"), text: $query).textFieldStyle(.plain).foregroundStyle(Theme.text).onSubmit(search)
-                }
-                .padding(12).panelBackground(Theme.surface, radius: 10)
-                Button(tr("Search"), action: search).buttonStyle(.primary).disabled(!query.contains("#") || loading)
-            }
+        Screen(title: riotId ?? tr("Player"), subtitle: tr("Searches the server you are logged in to")) {
             if loading { ProgressView().controlSize(.small) }
             if notFound { Label(tr("Player not found."), systemImage: "questionmark.circle.fill").foregroundStyle(Theme.warning) }
-            if let profile { ProfileDetail(profile: profile) }
+            if let profile {
+                ProfileDetail(profile: profile)
+            } else if riotId == nil {
+                Panel(title: tr("Find a player"), symbol: "magnifyingglass") {
+                    Text(tr("Type a Riot ID like Name#TAG in the search bar at the top (⌘K). Friends and recent searches are suggested as you type."))
+                        .foregroundStyle(Theme.textSecondary)
+                    let people = model.recentPlayers + model.friends.compactMap(\.riotId)
+                    if !people.isEmpty {
+                        HStack(spacing: 8) {
+                            ForEach(Array(people.prefix(8)), id: \.self) { id in
+                                Button(id) { riotId = id }.buttonStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
         }
+        .task(id: riotId) { await load() }
     }
 
-    private func search() {
-        guard query.contains("#") else { return }
-        loading = true
+    private func load() async {
+        profile = nil
         notFound = false
-        Task {
-            profile = await model.lookupPlayer(riotId: query)
-            notFound = profile == nil
-            loading = false
-        }
+        guard let riotId, riotId.contains("#") else { return }
+        loading = true
+        profile = await model.lookupPlayer(riotId: riotId)
+        if let found = profile?.summoner?.riotId { model.rememberPlayer(found) }
+        notFound = profile == nil
+        loading = false
     }
 }
 

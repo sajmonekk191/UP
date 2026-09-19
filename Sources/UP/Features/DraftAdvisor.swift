@@ -208,7 +208,7 @@ final class DraftAdvisor {
             if m.winRate <= 0.47 { reasons.append(Reason(text: tr("Weak vs %@ (%@)", name, percent(m.winRate, digits: 0)), positive: false)) }
         }
 
-        let record = model.myProfile?.record(for: entry.championId)
+        let record = model.myProfile?.usesPracticeGames == true ? nil : model.myProfile?.record(for: entry.championId)
         let mastery = model.myMasteries.first { $0.championId == entry.championId }
         let points = mastery?.championPoints ?? 0
         if let record, record.games >= 3 {

@@ -63,13 +63,65 @@ The left rail shows your teammates' rank, recent form and tags, the enemy picks 
 - Tier list per role with win, pick and ban rates and the rank change since the last patch.
 
 ### 👥 Players
-- **Overview**: rank, recent win rate, today's session, KDA, CS/min, damage/min, vision/min, role split, most played champions and mastery.
+- **Overview**: rank, recent win rate, today's session, KDA, CS/min, damage/min, vision/min, recent matches, mastery and most played champions.
+- **Match grades**: every recent match gets a grade from **S+** to **D**, your place in the lobby (**MVP**, **ACE**) and badges such as Perfect KDA, Pentakill, Legendary or Top damage. The grade compares your KDA, kill participation, damage, deaths, farm, vision and objectives with everyone else in the same match.
 - **Match history**: expand any game to see all 10 players, KP, damage and gold charts, bans and objectives.
-- **Player lookup** by Riot ID, with the same full profile.
+- **Player profiles** for any Riot ID, opened from the search bar, with the same full profile.
 - **Scout tags**: win and loss streaks, possible smurf, one-trick, strong in ranked, dies a lot, inactive and more.
 
-### 🎮 In game
-An optional always-on-top overlay (windowed or borderless mode) with dragon, Baron and inhibitor timers derived from game events, the item-gold difference, dragons and towers, and alerts for enemy counter items (Zhonya's, Guardian Angel, QSS, anti-heal…). Timers are rebuilt from event history after a reconnect.
+### 🎮 In-game HUD
+A HUD appears over the game by itself as soon as the match loads. It is shown **only while League of Legends is the frontmost app**, never over other apps. With several monitors it always appears on the monitor the game is on, and follows the game if you move it. Clicking the HUD itself or the desktop doesn't hide it. It's a small card you can drag anywhere, and **×** hides it.
+
+The mini HUD is compact (about 250 × 300 pt) and shows only what matters mid-fight:
+- **Header**: clock, kills and the item-gold difference.
+- **Objectives**:
+  - dragon (including Elder) and Baron timers from game events,
+  - inhibitor respawns labelled by side ("Our mid inhibitor" in blue, "Enemy top inhibitor" in red).
+
+  Timers are rebuilt from event history after a reconnect.
+- **Enemies**: level, K/D/A, respawn timer while dead, and **every item they hold**, including small components. Counter items such as Zhonya's, Guardian Angel, QSS and anti-heal are outlined in red.
+- **You**: the next core item with the gold still missing, and your CS per minute.
+- **Alerts**:
+  - your lane opponent or the enemy jungler reaching 6, 11 or 16,
+  - enemy item completions,
+  - the enemy jungler dying ("invade or take an objective"),
+  - 3+ enemies dead,
+  - an objective spawning in under a minute,
+  - soul point,
+  - aces and Barons,
+  - "you can buy X now".
+- **Match overview** (<kbd>⇧</kbd><kbd>Tab</kbd> or the expand button): the HUD turns into a large overview of both teams, centred at the top of the screen. It shows team average rank and form, and for every player:
+  - rank, ranked games and win rate,
+  - how well they know their champion (Main / Veteran / Experienced / Played before / First time?), with mastery level and points and their recent games and win rate on it,
+  - last 5 results, average KDA and scout tags,
+  - live K/D/A, CS and items.
+
+  Below the teams:
+  - **Your build path**: items you own ticked off, the next item highlighted with the gold still missing, and the skill max order.
+  - **Itemize vs enemy**: the enemy's magic/physical damage split and counter items picked for your champion type. Examples: anti-heal vs healers, magic resist vs AP teams, armor or stasis vs AD teams, Mercury's or QSS vs crowd control, penetration vs tanks, Serpent's Fang vs shields.
+  - **Lane & threats**: your lane opponent with the matchup win rate and a tip, plus enemies who are fed, levels ahead or holding counter items.
+
+  Press <kbd>⇧</kbd><kbd>Tab</kbd> again (or ×) to return to the HUD at its old position. The overview can be dragged too and reopens where you left it. If you closed the mini HUD with ×, it stays closed: the overview still opens with <kbd>⇧</kbd><kbd>Tab</kbd>, and its **Mini HUD** button (or <kbd>⌃</kbd><kbd>⇧</kbd><kbd>H</kbd>) brings the mini HUD back. <kbd>⇧</kbd><kbd>Tab</kbd> is only captured while the game is in front, so it keeps working normally in other apps.
+- Controls:
+  - drag the card to move it (the position is remembered and the HUD returns there after the match overview),
+  - drag the corner grip to resize it (70–180 %),
+  - × hides it and <kbd>⌃</kbd><kbd>⇧</kbd><kbd>H</kbd> brings it back,
+  - there is a compact mode (timers only),
+  - use windowed or borderless mode in the game.
+- **Preview** it without playing: **Tools → Preview in-game HUD** or <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd> runs a scripted one-minute game with sample players in a normal window, including the match overview.
+
+**Not included, on purpose:** ally or enemy summoner and ultimate cooldowns, and timers for every jungle camp. The Live Client API does not expose them, so they could only come from reading game memory or the screen. Riot's policy forbids that ("…e.g. automatically or manually allowing tracking enemy ultimate cooldowns") and Vanguard bans it. Allies' cooldowns and your own camps' respawns are already shown by the game itself.
+
+### 🔎 Search everywhere
+A compact search field sits in the top bar on every page and widens when you use it (<kbd>⌘</kbd><kbd>K</kbd>). It suggests as you type:
+- **Champions**: opens their build.
+- **Players**: you, your friends, recent searches and recent teammates, or any `Name#TAG` to look up.
+- **#tags**:
+  - `#top` `#jungle` `#mid` `#adc` `#support` open the tier list for that role,
+  - `#assassins` `#fighters` `#mages` `#marksmen` `#tanks` `#supports` filter champions by class,
+  - `#tierlist` `#builds` `#history` `#tools` `#overview` `#me` `#settings` `#preview` `#hud` are shortcuts.
+
+Use <kbd>↑</kbd><kbd>↓</kbd> to move, <kbd>↩</kbd> to open and <kbd>esc</kbd> to close.
 
 ### 🛠 Tools
 Create a lobby for any queue, start or cancel matchmaking, accept, play again, skip post-game stats, reconnect, set your status message and availability, delete UP!'s rune pages, and restart a frozen client UI.
@@ -125,8 +177,9 @@ The build is ad-hoc signed. On another Mac, the first launch may need a right-cl
 
 1. Start the League client. UP! finds it on its own through the client's lockfile or process arguments, and the sidebar shows **Connected**.
 2. Queue up. UP! accepts the match if auto-accept is on.
-3. Champ select opens the assistant window. Hover or lock a champion to get runes, a build and the game plan.
-4. Everything is logged in **Overview → Activity**.
+3. Navigate with the tabs in the top bar, or jump anywhere with the search bar (<kbd>⌘</kbd><kbd>K</kbd>).
+4. Champ select opens the assistant window. Hover or lock a champion to get runes, a build and the game plan.
+5. After the game, **Overview → Recent matches** grades how you played.
 
 ### Try it without a game
 **Tools → Preview champ select** (or <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd>) opens the assistant with a sample draft. Step through **Hover top pick → Lock in (preview)**. Nothing is sent to the client in preview mode.
@@ -135,12 +188,16 @@ The build is ad-hoc signed. On another Mac, the first launch may need a right-cl
 
 | Shortcut | Action |
 |---|---|
+| <kbd>⌘</kbd><kbd>K</kbd> | Search champions, players and #tags |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>D</kbd> | Open the champ select window |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd> | Preview champ select |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | Accept the match |
+| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd> | Preview the in-game HUD |
+| <kbd>⌃</kbd><kbd>⇧</kbd><kbd>H</kbd> | Show or hide the HUD (global, works in game) |
+| <kbd>⇧</kbd><kbd>Tab</kbd> | Switch between the HUD and the match overview (only while the game is in front) |
 | <kbd>⌘</kbd><kbd>,</kbd> | Settings |
 
-The menu bar icon gives quick access to auto-accept, auto runes, the assistant window and the overlay.
+The **UP!** item in the macOS menu bar has two commands: **Open UP!** and **Quit UP!**.
 
 ### Settings
 
@@ -154,7 +211,8 @@ The menu bar icon gives quick access to auto-accept, auto runes, the assistant w
 | Set summoner spells, Flash on F | On, On |
 | Save item sets | On |
 | Scout teammates | On |
-| In-game overlay, click-through | On, On |
+| In-game HUD (shown only while the game is in front) | On |
+| Compact HUD (timers only), pop-up alerts | Off, On |
 | Play again after each game | Off |
 
 Rune pages created by UP! are named with the `UP!` prefix, so they are easy to find and delete (**Tools → Delete "UP!" rune pages**).
@@ -198,17 +256,17 @@ UP/
 │   ├── App.swift                 App entry, main window, sidebar, menus
 │   ├── Core/                     LCU client + WebSocket, lockfile, Live Client API,
 │   │                             models, static game data, localization
-│   ├── Features/                 AppModel (coordinator), DraftAdvisor, BuildService,
-│   │                             ClientActions, PlayerScout, LiveGameAnalyzer,
+│   ├── Features/                 AppModel (coordinator), DraftAdvisor, HUDState, Search, BuildService,
+│   │                             ClientActions, PlayerScout, LiveGameAnalyzer, HUDPreview,
 │   │                             Settings, SelfTest
 │   ├── UI/                       Theme (design tokens), components, charts, screens,
-│   │                             champ select window, overlay
+│   │                             top bar + search, logo, champ select window, in-game HUD
 │   └── Translations/             Generated L10n+<lang>.swift tables
 ├── Translations/                 keys.json + <lang>.json (source of truth)
 ├── Resources/AppIcon.icns        App icon
 ├── scripts/
 │   ├── build-app.sh              Release build → dist/UP!.app
-│   ├── make-icon.sh              Renders the app icon (make-icon.swift) to .icns + docs/icon.png
+│   ├── make-icon.sh              Renders the app icon (make-icon/main.swift + UI/Logo.swift)
 │   ├── extract-keys.py           Lists untranslated strings
 │   └── gen-translations.py       Validates JSON, generates Swift tables
 └── docs/                         README assets
@@ -252,7 +310,7 @@ Design tokens (colors, radii, typography) live in `UI/Theme.swift`. Data colors 
 | "Looking for client…" | Start and log into the League client. UP! retries every 3 seconds. |
 | Runes don't import: "No free rune page" | Enable **Overwrite the current page** in Settings, or delete a page. |
 | Builds show "op.gg returned no data" | op.gg may be down or have changed its API. Riot's recommended runes still work. |
-| The overlay isn't visible over the game | Use windowed or borderless mode. macOS can't draw over exclusive fullscreen. |
+| The HUD isn't visible over the game | Use windowed or borderless mode (macOS can't draw over exclusive fullscreen), make sure the game (not the client) is in front, check **Settings → In-game HUD**, and press <kbd>⌃</kbd><kbd>⇧</kbd><kbd>H</kbd> in case you hid it with ×. |
 | "UP!" can't be opened because Apple cannot check it | Right-click the app and choose **Open**, or clear the quarantine flag (see above). |
 
 ---

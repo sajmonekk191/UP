@@ -385,8 +385,7 @@ struct RankEmblem: View {
 
     var body: some View {
         if let url = GameData.rankEmblemURL(tier) {
-            LCUImage(path: url, size: size, corner: 0, fill: .clear).scaleEffect(1.6)
-                .frame(width: size, height: size)
+            LCUImage(path: url, size: size, corner: 0, fill: .clear, crop: CGRect(x: 0.38, y: 0.31, width: 0.24, height: 0.32))
         } else {
             Image(systemName: "shield")
                 .font(.system(size: size * 0.5, weight: .light))
@@ -427,10 +426,13 @@ struct HeroBanner<Content: View>: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             GeometryReader { geo in
+                let imageHeight = geo.size.width * 9 / 16
+                let focus = min(max(geo.size.height / 2 - imageHeight * 0.36, geo.size.height - imageHeight), 0)
                 LCUImage(path: splashPath, size: nil, corner: 0, fill: Theme.surface, contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
+                    .frame(width: geo.size.width, height: imageHeight)
+                    .offset(y: focus)
             }
+            .clipped()
             LinearGradient(colors: [Theme.background.opacity(0.1), Theme.background.opacity(0.75), Theme.background],
                            startPoint: .top, endPoint: .bottom)
             LinearGradient(colors: [Theme.background.opacity(0.85), .clear], startPoint: .leading, endPoint: .center)

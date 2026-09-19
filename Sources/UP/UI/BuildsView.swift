@@ -3,6 +3,7 @@ import SwiftUI
 struct BuildsView: View {
     @Environment(AppModel.self) private var model
     @Binding var selection: Int?
+    @Binding var championClass: String?
     @State private var search = ""
     @State private var lane: Lane?
     @State private var mode: QueueMode = .ranked
@@ -38,7 +39,17 @@ struct BuildsView: View {
             }
             .padding(10)
             .panelBackground(Theme.surface, radius: 10)
-            .padding(.horizontal, 12).padding(.top, 40).padding(.bottom, 10)
+            .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, championClass == nil ? 10 : 6)
+
+            if let championClass {
+                HStack {
+                    Chip(text: "#\(championClass)", tone: .accent, symbol: "number")
+                    Spacer()
+                    Button { self.championClass = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
+                        .buttonStyle(.plain).help(tr("Clear filter"))
+                }
+                .padding(.horizontal, 16).padding(.bottom, 8)
+            }
 
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -111,7 +122,8 @@ struct BuildsView: View {
     }
 
     private var filtered: [ChampionSummary] {
-        let all = model.gameData.sortedChampions
+        var all = model.gameData.sortedChampions
+        if let championClass { all = all.filter { ($0.roles ?? []).contains(championClass) } }
         guard !search.isEmpty else { return all }
         return all.filter { $0.name.localizedCaseInsensitiveContains(search) }
     }
@@ -143,7 +155,7 @@ struct BuildsView: View {
 struct TierListView: View {
     @Environment(AppModel.self) private var model
     @State private var entries: [TierListEntry] = []
-    @State private var lane: Lane = .middle
+    @Binding var lane: Lane
     @State private var sort: Sort = .rank
     @State private var error: String?
     var onOpen: (Int) -> Void

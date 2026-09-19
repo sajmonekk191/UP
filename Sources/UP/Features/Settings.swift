@@ -31,15 +31,17 @@ final class AppSettings {
     var soundAlerts: Bool { didSet { save(soundAlerts, "soundAlerts") } }
     var autoPlayAgain: Bool { didSet { save(autoPlayAgain, "autoPlayAgain") } }
     var showOverlay: Bool { didSet { save(showOverlay, "showOverlay") } }
-    var overlayClickThrough: Bool { didSet { save(overlayClickThrough, "overlayClickThrough") } }
     var autoOpenChampSelect: Bool { didSet { save(autoOpenChampSelect, "autoOpenChampSelect") } }
+    var hudToasts: Bool { didSet { save(hudToasts, "hudToasts") } }
+    var hudCompact: Bool { didSet { save(hudCompact, "hudCompact") } }
+    var hudScale: Double { didSet { save(hudScale, "hudScale") } }
 
     init() {
         defaults.register(defaults: [
             "autoAccept": true, "acceptDelay": 2.0, "autoRunes": true, "runeSource": RuneSource.opgg.rawValue,
             "importOnHover": false, "allowOverwritePage": true, "autoSpells": true, "flashOnF": true,
             "autoItemSets": true, "scoutTeam": true, "soundAlerts": true, "autoPlayAgain": false,
-            "showOverlay": true, "overlayClickThrough": true, "autoOpenChampSelect": true,
+            "showOverlay": true, "autoOpenChampSelect": true, "hudToasts": true, "hudCompact": false, "hudScale": 1.0,
         ])
         autoAccept = defaults.bool(forKey: "autoAccept")
         acceptDelay = defaults.double(forKey: "acceptDelay")
@@ -54,8 +56,10 @@ final class AppSettings {
         soundAlerts = defaults.bool(forKey: "soundAlerts")
         autoPlayAgain = defaults.bool(forKey: "autoPlayAgain")
         showOverlay = defaults.bool(forKey: "showOverlay")
-        overlayClickThrough = defaults.bool(forKey: "overlayClickThrough")
         autoOpenChampSelect = defaults.bool(forKey: "autoOpenChampSelect")
+        hudToasts = defaults.bool(forKey: "hudToasts")
+        hudCompact = defaults.bool(forKey: "hudCompact")
+        hudScale = defaults.double(forKey: "hudScale")
     }
 
     private func save(_ value: Any, _ key: String) { defaults.set(value, forKey: key) }

@@ -104,10 +104,12 @@ struct LCUImage: View {
     var corner: CGFloat = 6
     var fill: Color = Color(hex: 0x152039)
     var contentMode: ContentMode = .fit
+    var crop: CGRect?
+    var alignment: Alignment = .center
     @State private var image: NSImage?
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: alignment) {
             RoundedRectangle(cornerRadius: corner, style: .continuous).fill(fill)
             if let image {
                 Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: contentMode)
@@ -119,7 +121,12 @@ struct LCUImage: View {
         .task(id: path) {
             image = nil
             guard let path else { return }
-            let loaded = await ImageCache.shared.image(for: path)
+            var loaded = await ImageCache.shared.image(for: path)
+            if let crop, let cg = loaded?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                let rect = CGRect(x: crop.minX * CGFloat(cg.width), y: crop.minY * CGFloat(cg.height),
+                                  width: crop.width * CGFloat(cg.width), height: crop.height * CGFloat(cg.height))
+                loaded = cg.cropping(to: rect).map { NSImage(cgImage: $0, size: rect.size) }
+            }
             withAnimation(.easeOut(duration: 0.2)) { image = loaded }
         }
     }

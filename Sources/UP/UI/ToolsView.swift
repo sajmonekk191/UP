@@ -70,6 +70,16 @@ struct ToolsView: View {
                     }
                 }
             }
+            Panel(title: tr("In-game HUD"), symbol: "rectangle.on.rectangle") {
+                Text(tr("The HUD appears over the game by itself when a match starts: objective timers, dragon soul, enemy levels and ultimate ranks, respawn timers, completed and counter items, your CS and next item, and alerts.")).font(.callout).foregroundStyle(Theme.textSecondary)
+                HStack {
+                    Button { model.startHUDPreview() } label: { Label(tr("Preview in-game HUD"), systemImage: "play.rectangle") }
+                        .buttonStyle(.primary)
+                    if model.isHUDPreview { Button(tr("Stop preview")) { model.endHUDPreview() }.buttonStyle(.secondary) }
+                    Spacer()
+                    Text(tr("⌃⇧H show or hide · ⇧Tab match overview")).font(.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
             Panel(title: tr("Maintenance"), symbol: "wrench.and.screwdriver.fill") {
                 HStack {
                     Button { Task { await model.perform(tr("UP! rune pages deleted")) { _ = try await ClientActions.deleteToolkitPages(client: $0) } } } label: {
@@ -142,9 +152,11 @@ struct SettingsView: View {
                 Toggle(tr("Flash on F (off = D)"), isOn: $settings.flashOnF)
                 Toggle(tr("Save item sets from op.gg"), isOn: $settings.autoItemSets)
             }
-            Section(tr("In game")) {
-                Toggle(tr("Show the overlay during games"), isOn: $settings.showOverlay)
-                Toggle(tr("Overlay lets mouse clicks through"), isOn: $settings.overlayClickThrough)
+            Section(tr("In-game HUD")) {
+                Toggle(tr("Show the HUD as soon as a game starts"), isOn: $settings.showOverlay)
+                Toggle(tr("Compact HUD (timers only)"), isOn: $settings.hudCompact)
+                Toggle(tr("Pop-up alerts"), isOn: $settings.hudToasts)
+                Text(tr("The HUD only appears while League of Legends is in front. Drag it anywhere, × hides it, ⌃⇧H brings it back and ⇧Tab switches to the match overview. Use windowed or borderless mode in the game.")).font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Text(tr("UP! only uses the client's official local API (LCU) and the Live Client Data API. It never reads or modifies game memory."))
