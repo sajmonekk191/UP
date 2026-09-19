@@ -10,7 +10,7 @@ struct LCUEvent: Sendable {
     }
 }
 
-/// Subscribes to every JSON API event the League client publishes over its WAMP websocket.
+/// Subscribes to selected JSON API events the League client publishes over its WAMP websocket.
 final class LCUWebSocket: @unchecked Sendable {
     private let credentials: LCUCredentials
     private var task: URLSessionWebSocketTask?
@@ -19,8 +19,8 @@ final class LCUWebSocket: @unchecked Sendable {
         self.credentials = credentials
     }
 
-    /// Streams events until the socket closes.
-    func events() -> AsyncThrowingStream<LCUEvent, Error> {
+    /// Streams the events of the given endpoints until the socket closes.
+    func events(for uris: [String]) -> AsyncThrowingStream<LCUEvent, Error> {
         var request = URLRequest(url: URL(string: "wss://127.0.0.1:\(credentials.port)/")!)
         request.setValue(credentials.authHeader, forHTTPHeaderField: "Authorization")
         let task = localhostSession.webSocketTask(with: request)
@@ -30,7 +30,10 @@ final class LCUWebSocket: @unchecked Sendable {
         return AsyncThrowingStream { continuation in
             let receiver = Task {
                 do {
-                    try await task.send(.string(#"[5, "OnJsonApiEvent"]"#))
+                    for uri in uris {
+                        let name = "OnJsonApiEvent" + uri.replacingOccurrences(of: "/", with: "_")
+                        try await task.send(.string("[5, \"\(name)\"]"))
+                    }
                     while !Task.isCancelled {
                         let message = try await task.receive()
                         if let event = Self.parse(message) { continuation.yield(event) }

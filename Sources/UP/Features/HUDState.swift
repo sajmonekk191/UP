@@ -16,7 +16,6 @@ struct Toast: Identifiable, Hashable {
 /// One enemy or ally row in the HUD, derived from the live snapshot.
 struct HUDPlayer: Identifiable, Hashable {
     var id: String
-    var name: String
     var championName: String
     var championId: Int?
     var position: String?
@@ -27,8 +26,6 @@ struct HUDPlayer: Identifiable, Hashable {
     var completedItems: [Int]
     var counterItems: [Int]
     var items: [Int]
-
-    var ultRanks: Int { level >= 16 ? 3 : level >= 11 ? 2 : level >= 6 ? 1 : 0 }
 }
 
 /// Next core item for the local player and how much gold is still missing.
@@ -44,7 +41,6 @@ struct ItemGoal: Hashable {
 @Observable
 final class HUDState {
     private(set) var enemies: [HUDPlayer] = []
-    private(set) var allies: [HUDPlayer] = []
     private(set) var goal: ItemGoal?
     private(set) var toasts: [Toast] = []
     private(set) var csPerMinute = 0.0
@@ -59,35 +55,37 @@ final class HUDState {
     private var isFirst = true
 
     func reset() {
-        enemies = []; allies = []; goal = nil; toasts = []; csPerMinute = 0; myBuild = nil; myChampionId = nil
+        enemies = []; goal = nil; toasts = []; csPerMinute = 0; myBuild = nil; myChampionId = nil
         previous = [:]; announced = []; coreItems = []; buildKey = ""; lastEventId = -1; isFirst = true
     }
 
     func ingest(_ live: LiveGameSnapshot, model: AppModel) {
         let data = model.gameData
-        let rows = live.players.map { player -> HUDPlayer in
-            let legendary = player.items.map(\.itemID).filter { id in
-                guard let item = data.items[id] else { return false }
-                return (item.priceTotal ?? 0) >= 2200 && (item.to ?? []).isEmpty
-            }
-            return HUDPlayer(id: player.id, name: player.name, championName: player.championName,
-                             championId: data.champion(named: player.championName)?.id, position: player.position,
-                             level: player.level, isDead: player.isDead, respawn: player.respawnTimer ?? 0,
-                             kills: player.scores.kills, deaths: player.scores.deaths, assists: player.scores.assists,
-                             completedItems: legendary,
-                             counterItems: player.items.map(\.itemID).filter { LiveGameAnalyzer.counterItems[$0] != nil },
-                             items: player.items.filter { ($0.slot ?? 0) < 6 }.sorted { ($0.slot ?? 0) < ($1.slot ?? 0) }.map(\.itemID))
+        var rows: [HUDPlayer] = [], enemyRows: [HUDPlayer] = []
+        for player in live.players {
+            let owned = player.items.map(\.itemID)
+            let row = HUDPlayer(id: player.id, championName: player.championName,
+                                championId: data.champion(named: player.championName)?.id, position: player.position,
+                                level: player.level, isDead: player.isDead, respawn: player.respawnTimer ?? 0,
+                                kills: player.scores.kills, deaths: player.scores.deaths, assists: player.scores.assists,
+                                completedItems: owned.filter { id in
+                                    guard let item = data.items[id] else { return false }
+                                    return (item.priceTotal ?? 0) >= 2200 && (item.to ?? []).isEmpty
+                                },
+                                counterItems: owned.filter { LiveGameAnalyzer.counterItems[$0] != nil },
+                                items: player.items.filter { ($0.slot ?? 0) < 6 }.sorted { ($0.slot ?? 0) < ($1.slot ?? 0) }.map(\.itemID))
+            rows.append(row)
+            if player.team != live.myTeam { enemyRows.append(row) }
         }
-        let myTeam = live.myTeam
-        let enemyRows = rows.filter { row in live.players.first { $0.id == row.id }?.team != myTeam }
-        let allyRows = rows.filter { row in live.players.first { $0.id == row.id }?.team == myTeam }
 
-        for id in rows.compactMap(\.championId) where data.details[id] == nil {
-            Task { _ = await data.detail(id, client: model.client) }
+        let missing = rows.compactMap(\.championId).filter { data.details[$0] == nil }
+        if !missing.isEmpty { Task { await data.prefetchDetails(missing, client: model.client) } }
+        if isFirst {
+            lastEventId = live.announcements.map(\.id).max() ?? -1
+        } else {
+            diff(enemies: enemyRows, live: live, model: model)
         }
-        if !isFirst { diff(enemies: enemyRows, allies: allyRows, live: live, model: model) }
         enemies = enemyRows
-        allies = allyRows
         previous = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         isFirst = false
 
@@ -101,7 +99,7 @@ final class HUDState {
 
     // MARK: Events
 
-    private func diff(enemies: [HUDPlayer], allies: [HUDPlayer], live: LiveGameSnapshot, model: AppModel) {
+    private func diff(enemies: [HUDPlayer], live: LiveGameSnapshot, model: AppModel) {
         let myPosition = live.me?.position
         for enemy in enemies {
             guard let before = previous[enemy.id] else { continue }
@@ -125,11 +123,10 @@ final class HUDState {
         if let me = live.me, me.isDead, previous[me.id]?.isDead == false, (me.respawnTimer ?? 0) >= 25 {
             push("clock.fill", tr("You respawn in %ds. Plan your next item and path.", Int(me.respawnTimer ?? 0)), .info)
         }
-        for event in live.feed where event.id > lastEventId {
-            if event.symbol == "star.fill" { push("star.fill", event.text, event.side == .ally ? .good : .danger) }
-            if event.symbol == "crown.fill" { push("crown.fill", event.text, event.side == .ally ? .good : .danger) }
+        for event in live.announcements where event.id > lastEventId {
+            push(event.symbol, event.text, event.ally ? .good : .danger)
         }
-        lastEventId = max(lastEventId, live.feed.map(\.id).max() ?? -1)
+        lastEventId = max(lastEventId, live.announcements.map(\.id).max() ?? -1)
     }
 
     private func objectiveCalls(_ live: LiveGameSnapshot) {

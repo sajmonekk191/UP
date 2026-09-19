@@ -65,8 +65,8 @@ The left rail shows your teammates' rank, recent form and tags, the enemy picks 
 ### 👥 Players
 - **Overview**: rank, recent win rate, today's session, KDA, CS/min, damage/min, vision/min, recent matches, mastery and most played champions.
 - **Match grades**: every recent match gets a grade from **S+** to **D**, your place in the lobby (**MVP**, **ACE**) and badges such as Perfect KDA, Pentakill, Legendary or Top damage. The grade compares your KDA, kill participation, damage, deaths, farm, vision and objectives with everyone else in the same match.
-- **Match history**: expand any game to see all 10 players, KP, damage and gold charts, bans and objectives.
-- **Player profiles** for any Riot ID, opened from the search bar, with the same full profile.
+- **Match history** (**Overview → All matches**): a summary of your average grade, MVP games, best game and badges, then every recent match. Click a match to see all players with their grades, KP, damage and gold charts, bans and objectives.
+- **Player profiles** for anyone on any server (EUNE, EUW, NA, KR and 13 more), opened from the search bar: rank, recent form, the last 20 matches with grades and every player of each match, and the champions they play in ranked this season.
 - **Scout tags**: win and loss streaks, possible smurf, one-trick, strong in ranked, dies a lot, inactive and more.
 
 ### 🎮 In-game HUD
@@ -113,9 +113,10 @@ The mini HUD is compact (about 250 × 300 pt) and shows only what matters mid-fi
 **Not included, on purpose:** ally or enemy summoner and ultimate cooldowns, and timers for every jungle camp. The Live Client API does not expose them, so they could only come from reading game memory or the screen. Riot's policy forbids that ("…e.g. automatically or manually allowing tracking enemy ultimate cooldowns") and Vanguard bans it. Allies' cooldowns and your own camps' respawns are already shown by the game itself.
 
 ### 🔎 Search everywhere
-A compact search field sits in the top bar on every page and widens when you use it (<kbd>⌘</kbd><kbd>K</kbd>). It suggests as you type:
+The search field sits in the top bar on every page and widens when you use it (<kbd>⌘</kbd><kbd>K</kbd>). The server picker on its left (for example **EUNE**) decides where players are looked up; it starts on your client's server. It suggests as you type:
 - **Champions**: opens their build.
 - **Players**: you, your friends, recent searches and recent teammates, or any `Name#TAG` to look up.
+- **Accounts on the server**: every account with that name, for example all the "faker" accounts on EUNE, with level, solo rank and a badge for pro players. Scroll down and more keep loading.
 - **#tags**:
   - `#top` `#jungle` `#mid` `#adc` `#support` open the tier list for that role,
   - `#assassins` `#fighters` `#mages` `#marksmen` `#tanks` `#supports` filter champions by class,
@@ -127,7 +128,7 @@ Use <kbd>↑</kbd><kbd>↓</kbd> to move, <kbd>↩</kbd> to open and <kbd>esc</k
 Create a lobby for any queue, start or cancel matchmaking, accept, play again, skip post-game stats, reconnect, set your status message and availability, delete UP!'s rune pages, and restart a frozen client UI.
 
 ### 🌍 10 languages
-English · Deutsch · Français · Español · Italiano · Português · Nederlands · Polski · Čeština · Slovenčina. You can switch at any time from the sidebar, the **Language** menu or Settings. Numbers follow the selected language (for example `51,2 %`).
+English · Deutsch · Français · Español · Italiano · Português · Nederlands · Polski · Čeština · Slovenčina. You can switch at any time from the flag in the top bar, the **Language** menu or Settings. Numbers follow the selected language (for example `51,2 %`).
 
 ---
 
@@ -137,7 +138,7 @@ UP! only talks to **interfaces Riot's own software exposes**:
 
 - the League client's local API (LCU), the same API the client uses for its own UI (widely used by companion apps, but not officially supported, so endpoints can change with client patches),
 - Riot's **Live Client Data API** during a game,
-- public build statistics (op.gg) and static game assets.
+- public build and player statistics (op.gg) and static game assets.
 
 It **never reads or writes game memory**, injects into the game or touches Vanguard. Every automation is something you could do by hand in the client (accept a match, set runes, spells and item sets). UP! does **not** auto-pick, auto-ban, reveal hidden names in ranked champ select, dodge, or show information the game hides from you (such as enemy summoner or jungle timers).
 
@@ -175,11 +176,11 @@ The build is ad-hoc signed. On another Mac, the first launch may need a right-cl
 
 ## Using UP!
 
-1. Start the League client. UP! finds it on its own through the client's lockfile or process arguments, and the sidebar shows **Connected**.
+1. Start the League client. UP! finds it on its own through the client's lockfile or process arguments; the dot on your profile picture turns green.
 2. Queue up. UP! accepts the match if auto-accept is on.
-3. Navigate with the tabs in the top bar, or jump anywhere with the search bar (<kbd>⌘</kbd><kbd>K</kbd>).
+3. Switch sections with <kbd>⌘</kbd><kbd>1</kbd>–<kbd>⌘</kbd><kbd>4</kbd> or the navigation, or jump anywhere with the search bar (<kbd>⌘</kbd><kbd>K</kbd>). The navigation sits in the top bar as **tabs** next to the logo by default; it also comes as **League-style tabs**, a **side rail**, a **floating dock** at the bottom and a **compact side pill**. Pick one in Settings or the profile menu, or press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>N</kbd> to flip through them. During champ select every style shows a live **Champ select** button that brings the assistant back.
 4. Champ select opens the assistant window. Hover or lock a champion to get runes, a build and the game plan.
-5. After the game, **Overview → Recent matches** grades how you played.
+5. After the game, **Overview → Recent matches** grades how you played. Results of actions (imported runes, saved item sets, lobby commands) show up as short messages at the bottom of the window.
 
 ### Try it without a game
 **Tools → Preview champ select** (or <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd>) opens the assistant with a sample draft. Step through **Hover top pick → Lock in (preview)**. Nothing is sent to the client in preview mode.
@@ -188,7 +189,10 @@ The build is ad-hoc signed. On another Mac, the first launch may need a right-cl
 
 | Shortcut | Action |
 |---|---|
+| <kbd>⌘</kbd><kbd>1</kbd> – <kbd>⌘</kbd><kbd>4</kbd> | Overview, Builds & runes, Tier list, Tools |
+| <kbd>⌘</kbd><kbd>[</kbd> | Back from match history or a player profile |
 | <kbd>⌘</kbd><kbd>K</kbd> | Search champions, players and #tags |
+| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>N</kbd> | Next navigation style |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>D</kbd> | Open the champ select window |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd> | Preview champ select |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | Accept the match |
@@ -224,13 +228,14 @@ Rune pages created by UP! are named with the `UP!` prefix, so they are easy to f
 | Source | Used for | Key needed |
 |---|---|---|
 | **LCU** `https://127.0.0.1:<port>` | Summoner, ranked, match history, mastery, champ select session, owned champions, runes, spells, item sets, lobby, chat | No (local lockfile token) |
-| **LCU WebSocket** (`OnJsonApiEvent`) | Live gameflow phase, ready check and champ select updates | No |
+| **LCU WebSocket** (`OnJsonApiEvent_…`) | Live gameflow phase, ready check and champ select updates | No |
 | **Live Client Data API** `https://127.0.0.1:2999` | In-game players, items, scores, events and timers | No |
 | **op.gg champion API** | Build stats per role and elo (Emerald+, Master+, Challenger), counters, tier list, game length and patch trends | No (unofficial, may change) |
+| **op.gg summoner API** | Account search by name on every server, and rank, season champions and the last 20 matches of players on other servers | No (unofficial, may change) |
 | **Riot recommended pages** (LCU `/lol-perks/v1/recommended-pages`) | Fallback runes and spells | No |
 | **Client game data and CommunityDragon** | Champion, item, rune and spell names, icons, splash art, abilities, rank emblems | No |
 
-UP! does not need a Riot API key and runs entirely on your machine. Results are cached briefly: builds for 5 minutes and the tier list for 10.
+UP! does not need a Riot API key and runs entirely on your machine. Results are cached briefly: builds and player profiles for 5 minutes and the tier list for 10.
 
 ---
 
@@ -253,21 +258,21 @@ The result is clamped to 0–99 and shown with the strongest reasons. It's a gui
 UP/
 ├── Package.swift                 Swift package (single executable target "UP")
 ├── Sources/UP/
-│   ├── App.swift                 App entry, main window, sidebar, menus
+│   ├── App.swift                 App entry, main window, page routing, menus
 │   ├── Core/                     LCU client + WebSocket, lockfile, Live Client API,
 │   │                             models, static game data, localization
 │   ├── Features/                 AppModel (coordinator), DraftAdvisor, HUDState, Search, BuildService,
-│   │                             ClientActions, PlayerScout, LiveGameAnalyzer, HUDPreview,
-│   │                             Settings, SelfTest
-│   ├── UI/                       Theme (design tokens), components, charts, screens,
-│   │                             top bar + search, logo, champ select window, in-game HUD
+│   │                             ClientActions, PlayerScout, PlayerSearch (servers, op.gg accounts), Performance (match grades),
+│   │                             LiveGameAnalyzer, MatchInsights, HUDPreview, Settings, SelfTest
+│   ├── UI/                       Theme (design tokens), components, charts, screens, match cards,
+│   │                             top bar + search, navigation styles, logo, champ select window, in-game HUD
 │   └── Translations/             Generated L10n+<lang>.swift tables
 ├── Translations/                 keys.json + <lang>.json (source of truth)
 ├── Resources/AppIcon.icns        App icon
 ├── scripts/
 │   ├── build-app.sh              Release build → dist/UP!.app
 │   ├── make-icon.sh              Renders the app icon (make-icon/main.swift + UI/Logo.swift)
-│   ├── extract-keys.py           Lists untranslated strings
+│   ├── extract-keys.py           Lists untranslated strings (--prune drops unused ones)
 │   └── gen-translations.py       Validates JSON, generates Swift tables
 └── docs/                         README assets
 ```
@@ -279,7 +284,7 @@ UP/
 English strings in code are the lookup keys: `tr("Your turn to pick")`, `tr("%d games today", n)`.
 
 ```bash
-python3 scripts/extract-keys.py      # prints strings missing from Translations/keys.json
+python3 scripts/extract-keys.py      # prints strings missing from Translations/keys.json (--prune removes unused keys)
 # add them to keys.json and translate them in Translations/<lang>.json
 python3 scripts/gen-translations.py  # validates format specifiers, writes Swift tables
 ```
@@ -297,7 +302,7 @@ swift build                         # debug build
 ./scripts/make-icon.sh              # re-render the app icon and docs/icon.png
 ```
 
-`--selftest` checks the client connection, summoner, game data, profile and history, lookup, mastery, match detail, op.gg builds (ranked, ARAM, main role), champion details, Riot runes, the tier list and the WebSocket. It changes nothing on your account.
+`--selftest` checks the client connection, summoner, game data, profile and history, lookup, mastery, match detail, op.gg builds (ranked, ARAM, main role), champion details, Riot runes, the tier list, op.gg account search and profiles, and the WebSocket. It changes nothing on your account.
 
 Design tokens (colors, radii, typography) live in `UI/Theme.swift`. Data colors were validated for colour-blind separation on the panel surface.
 
@@ -329,6 +334,6 @@ Design tokens (colors, radii, typography) live in `UI/Theme.swift`. Data colors 
 
 UP! isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, League of Legends and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
 
-Build statistics are provided by op.gg. UP! isn't affiliated with op.gg.
+Build statistics, account search and profiles on other servers are provided by op.gg. UP! isn't affiliated with op.gg.
 
 **License:** not chosen yet. Until a `LICENSE` file is added, all rights are reserved.

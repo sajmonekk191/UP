@@ -44,7 +44,7 @@ final class ChampSelectWindowController: NSObject, NSWindowDelegate {
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.title = "UP! – Champ Select"
+        window.title = "UP! – " + tr("Champ select")
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(Theme.background)
         window.minSize = NSSize(width: 1240, height: 760)
@@ -208,6 +208,14 @@ private struct TeamRail: View {
                         FormStrip(form: Array(profile.form.prefix(5)), size: 14)
                     }
                     if let first = profile.tags.first { TagChip(tag: first).lineLimit(1) }
+                } else if model.settings.scoutTeam, player.hasIdentity {
+                    HStack(spacing: 6) {
+                        Bone(width: 64, height: 7)
+                        HStack(spacing: 3) {
+                            ForEach(0..<5, id: \.self) { _ in Bone(width: 14, height: 14, radius: 4) }
+                        }
+                    }
+                    .shimmering()
                 } else {
                     Text(model.gameData.championName(player.displayedChampionId)).font(.caption2).foregroundStyle(Theme.textMuted)
                 }
@@ -238,7 +246,27 @@ private struct MyFormCard: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let profile = model.myProfile {
+        if model.myProfile == nil, model.connection == .connected {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(tr("Your form")).eyebrow()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Bone(width: 34, height: 34, radius: 17)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Bone(width: 96, height: 10, line: 15)
+                            Bone(width: 118, height: 7, line: 13)
+                        }
+                    }
+                    HStack(spacing: 3) {
+                        ForEach(0..<10, id: \.self) { _ in Bone(width: 14, height: 14, radius: 4) }
+                    }
+                }
+                .shimmering()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .panelBackground(Theme.surface, radius: 12)
+        } else if let profile = model.myProfile {
             VStack(alignment: .leading, spacing: 8) {
                 Text(tr("Your form")).eyebrow()
                 HStack {
@@ -322,14 +350,18 @@ private struct PickAdvisorPanel: View {
             }
         } content: {
             if advisor.loadingSuggestions && advisor.suggestions.isEmpty {
-                HStack { ProgressView().controlSize(.small); Text(tr("Analysing matchups…")).foregroundStyle(Theme.textSecondary) }
+                LoadingNote(text: tr("Analysing matchups…"))
+                ForEach(0..<4, id: \.self) { index in
+                    if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                    PickRowSkeleton()
+                }
             }
             ForEach(Array(advisor.suggestions.prefix(8).enumerated()), id: \.element.id) { index, pick in
                 if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
                 Button { selected = selected == pick.championId ? nil : pick.championId } label: {
                     PickRow(pick: pick, rank: index + 1, selected: selected == pick.championId)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain).handCursor()
             }
             Text(tr("Score combines tier, counters against revealed enemies, your mastery and results, and team fit. Only champions you own."))
                 .font(.caption2).foregroundStyle(Theme.textMuted)
@@ -373,6 +405,36 @@ private struct PickRow: View {
     }
 }
 
+/// Placeholder in the shape of a pick suggestion row.
+private struct PickRowSkeleton: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Bone(width: 9, height: 9).frame(width: 16)
+            Bone(width: 44, height: 44, radius: 10.5)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Bone(width: 88, height: 12, line: 17)
+                    ForEach(0..<3, id: \.self) { _ in
+                        HStack(spacing: 3) {
+                            Bone(width: 16, height: 16, radius: 4)
+                            Bone(width: 22, height: 7)
+                        }
+                    }
+                }
+                HStack(spacing: 4) {
+                    Bone(width: 96, height: 16, radius: 8)
+                    Bone(width: 82, height: 16, radius: 8)
+                    Bone(width: 68, height: 16, radius: 8)
+                }
+            }
+            Spacer()
+            Circle().stroke(Theme.skeleton, lineWidth: 4).frame(width: 42, height: 42)
+        }
+        .padding(.vertical, 4).padding(.horizontal, 4)
+        .shimmering()
+    }
+}
+
 struct ScoreRing: View {
     let score: Int
 
@@ -395,7 +457,13 @@ private struct BanPanel: View {
 
     var body: some View {
         Panel(title: tr("Ban suggestions"), symbol: "nosign") {
-            if model.advisor.bans.isEmpty { Text(tr("Loading…")).foregroundStyle(Theme.textMuted) }
+            if model.advisor.bans.isEmpty {
+                if model.advisor.loadingSuggestions {
+                    RowsSkeleton(rows: 3, icon: 32, trailing: 40)
+                } else {
+                    Text(tr("No data.")).foregroundStyle(Theme.textMuted)
+                }
+            }
             ForEach(model.advisor.bans) { ban in
                 HStack(spacing: 10) {
                     ChampionIcon(id: ban.championId, size: 32, ring: Theme.enemy.opacity(0.5))
@@ -459,14 +527,22 @@ private struct HoverView: View {
         let advisor = model.advisor
         VStack(alignment: .leading, spacing: Theme.gap) {
             FocusBanner(championId: championId, subtitle: tr("Hovering · lock in to see the full game plan"))
-            if advisor.loadingFocus && advisor.builds.isEmpty { ProgressView().controlSize(.small) }
             let runes = [advisor.builds[.emeraldPlus]?.runes.first, advisor.builds[.masterPlus]?.runes.first, advisor.riotRunes.first].compactMap { $0 }
             Panel(title: tr("Quick runes"), symbol: "circle.hexagongrid.fill") {
                 ForEach(Array(runes.enumerated()), id: \.element.id) { index, setup in
                     if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
                     RuneRow(setup: setup, recommended: index == 0, compact: true) { Task { await model.applyRunes(setup, championId: championId) } }
                 }
-                if runes.isEmpty && !advisor.loadingFocus { Text(tr("No data.")).foregroundStyle(Theme.textMuted) }
+                if runes.isEmpty {
+                    if advisor.loadingFocus {
+                        ForEach(0..<3, id: \.self) { index in
+                            if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                            RuneRowSkeleton(compact: true)
+                        }
+                    } else {
+                        Text(tr("No data.")).foregroundStyle(Theme.textMuted)
+                    }
+                }
             }
             VersusEnemies(championId: championId)
         }
@@ -494,8 +570,11 @@ private struct LockedView: View {
                 Spacer()
                 Segmented(options: EloTier.allCases.filter { advisor.builds[$0] != nil }.map { ($0, $0.title) }, selection: $tier)
             }
-            if advisor.loadingFocus && advisor.builds.isEmpty { ProgressView().controlSize(.small) }
-            BuildDetails(build: advisor.builds[tier] ?? advisor.build, extraRunes: tier == .emeraldPlus ? advisor.riotRunes : [], championId: championId)
+            if advisor.loadingFocus && advisor.builds.isEmpty {
+                BuildSkeleton()
+            } else {
+                BuildDetails(build: advisor.builds[tier] ?? advisor.build, extraRunes: tier == .emeraldPlus ? advisor.riotRunes : [], championId: championId)
+            }
         }
     }
 }
@@ -580,10 +659,18 @@ private struct QuickBuild: View {
                     }
                 }
             } else {
-                ProgressView().controlSize(.small)
+                ForEach(0..<2, id: \.self) { _ in RuneRowSkeleton(compact: true) }
+                HStack(spacing: 6) {
+                    Text(tr("Core")).eyebrow()
+                    HStack(spacing: 6) {
+                        ForEach(0..<3, id: \.self) { _ in Bone(width: 28, height: 28, radius: 5) }
+                    }
+                    .shimmering()
+                }
             }
         }
         .task(id: championId) {
+            build = nil
             build = try? await BuildService.opggBuild(championId: championId, lane: model.advisor.lane, mode: model.queueMode)
         }
     }

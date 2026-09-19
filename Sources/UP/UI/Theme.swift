@@ -19,6 +19,7 @@ enum Theme {
     static let hover = Color(hex: 0x1B2849)
     static let hairline = Color(hex: 0x21304F)
     static let hairlineStrong = Color(hex: 0x2E4270)
+    static let skeleton = Color(hex: 0x19253F)
 
     static let text = Color(hex: 0xEAF1FF)
     static let textSecondary = Color(hex: 0x9AABCB)
@@ -38,10 +39,11 @@ enum Theme {
     static let gold = Color(hex: 0xD9A441)
     static let good = Color(hex: 0x2FBF71)
     static let warning = Color(hex: 0xFAB219)
-    static let critical = Color(hex: 0xD03B3B)
 
     static let radius: CGFloat = 14
     static let gap: CGFloat = 16
+    /// Bottom space that keeps scrolled content clear of the navigation dock.
+    static let dockClearance: CGFloat = 104
 
     static let backdrop = LinearGradient(
         colors: [Color(hex: 0x0B1630), Color(hex: 0x060A14)],
@@ -50,7 +52,6 @@ enum Theme {
 
 extension Font {
     static let display = Font.system(size: 30, weight: .bold, design: .default)
-    static let hero = Font.system(size: 44, weight: .semibold)
     static let tileValue = Font.system(size: 22, weight: .semibold)
     static let label = Font.system(size: 10.5, weight: .semibold).width(.expanded)
 }
@@ -64,6 +65,18 @@ extension View {
     func panelBackground(_ fill: Color = Theme.surface, radius: CGFloat = Theme.radius) -> some View {
         background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
+    }
+
+    /// Shows the pointing-hand cursor over this clickable view while it is enabled.
+    func handCursor() -> some View { modifier(HandCursor()) }
+}
+
+private struct HandCursor: ViewModifier {
+    @Environment(\.isEnabled) private var enabled
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) { content.pointerStyle(enabled ? .link : nil) } else { content }
     }
 }
 
@@ -82,6 +95,7 @@ struct PrimaryButtonStyle: ButtonStyle {
                 in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .shadow(color: Theme.accent.opacity(0.35), radius: 8, y: 2)
             .opacity(enabled ? 1 : 0.4)
+            .handCursor()
     }
 }
 
@@ -97,6 +111,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .background(configuration.isPressed ? Theme.hover : Theme.raised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.hairlineStrong, lineWidth: 1))
             .opacity(enabled ? 1 : 0.4)
+            .handCursor()
     }
 }
 
@@ -132,7 +147,7 @@ struct Segmented<Value: Hashable>: View {
                         }
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain).handCursor()
             }
         }
         .padding(3)
@@ -153,7 +168,7 @@ struct PillToggleStyle: ToggleStyle {
             .frame(width: 32, height: 18)
             .animation(.snappy(duration: 0.15), value: configuration.isOn)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).handCursor()
         .accessibilityValue(configuration.isOn ? Text("On") : Text("Off"))
     }
 }

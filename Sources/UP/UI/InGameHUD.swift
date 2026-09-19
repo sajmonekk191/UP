@@ -275,7 +275,7 @@ struct OverlayControls: View {
                 .overlay(Circle().strokeBorder(Theme.hairline))
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).handCursor()
         .help(help)
     }
 }

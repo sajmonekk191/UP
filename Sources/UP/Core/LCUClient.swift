@@ -1,13 +1,11 @@
 import Foundation
 
 enum LCUError: LocalizedError {
-    case notConnected
     case http(Int, String)
 
     var errorDescription: String? {
         switch self {
-        case .notConnected: return tr("The League client is not connected.")
-        case let .http(code, message): return "LCU \(code): \(message)"
+        case let .http(code, message): "LCU \(code): \(message)"
         }
     }
 }

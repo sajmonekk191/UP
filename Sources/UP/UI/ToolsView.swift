@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct ToolsView: View {
+struct ToolsView: View, Equatable {
     @Environment(AppModel.self) private var model
     var openChampSelect: () -> Void
     @State private var statusMessage = ""
@@ -8,9 +8,11 @@ struct ToolsView: View {
     @State private var queueId = 420
     @State private var confirmRestart = false
 
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
+
     private let queues: [(Int, String)] = [
-        (420, "Ranked Solo/Duo"), (440, "Ranked Flex"), (400, "Normal Draft"), (490, "Quickplay"),
-        (450, "ARAM"), (1700, "Arena"), (1900, "URF"), (830, "Co-op vs AI"),
+        (420, tr("Ranked Solo")), (440, tr("Ranked Flex")), (400, tr("Normal Draft")), (490, tr("Quickplay")),
+        (450, "ARAM"), (1700, tr("Arena")), (1900, "URF"), (830, tr("Co-op vs AI")),
     ]
 
     var body: some View {
@@ -71,7 +73,7 @@ struct ToolsView: View {
                 }
             }
             Panel(title: tr("In-game HUD"), symbol: "rectangle.on.rectangle") {
-                Text(tr("The HUD appears over the game by itself when a match starts: objective timers, dragon soul, enemy levels and ultimate ranks, respawn timers, completed and counter items, your CS and next item, and alerts.")).font(.callout).foregroundStyle(Theme.textSecondary)
+                Text(tr("The HUD appears over the game by itself when a match starts: dragon, Baron and inhibitor timers, every enemy with level, respawn timer and all items (counter items outlined), your next item and CS per minute, and pop-up alerts.")).font(.callout).foregroundStyle(Theme.textSecondary)
                 HStack {
                     Button { model.startHUDPreview() } label: { Label(tr("Preview in-game HUD"), systemImage: "play.rectangle") }
                         .buttonStyle(.primary)
@@ -123,10 +125,14 @@ struct SettingsView: View {
         @Bindable var settings = model.settings
         @Bindable var localizer = localizer
         Form {
-            Section(tr("Language")) {
+            Section(tr("Appearance")) {
                 Picker(tr("Language"), selection: $localizer.language) {
                     ForEach(AppLanguage.allCases) { Text("\($0.flag)  \($0.nativeName)").tag($0) }
                 }
+                Picker(tr("Navigation style"), selection: $settings.navigationStyle) {
+                    ForEach(NavigationStyle.allCases) { Text($0.title).tag($0) }
+                }
+                Text(tr("⌘⇧N switches to the next style right away, so you can compare them.")).font(.caption).foregroundStyle(.secondary)
             }
             Section(tr("Match found")) {
                 Toggle(tr("Accept matches automatically"), isOn: $settings.autoAccept)

@@ -45,18 +45,9 @@ struct Lossy<Value: Decodable & Sendable>: Decodable, Sendable {
 }
 
 struct LiveActivePlayer: Decodable, Sendable {
-    struct Stats: Decodable, Sendable {
-        var attackDamage: Double?, abilityPower: Double?, armor: Double?, magicResist: Double?
-        var attackSpeed: Double?, moveSpeed: Double?, critChance: Double?, abilityHaste: Double?
-        var lifeSteal: Double?, omnivamp: Double?, physicalLethality: Double?, magicPenetrationFlat: Double?
-        var currentHealth: Double?, maxHealth: Double?, resourceValue: Double?, resourceMax: Double?
-        var resourceType: String?, attackRange: Double?, healthRegenRate: Double?, tenacity: Double?
-    }
     var riotId: String?
     var summonerName: String?
-    var level: Int?
     var currentGold: Double?
-    var championStats: Stats?
 }
 
 struct LivePlayer: Decodable, Sendable, Identifiable, Hashable {
@@ -65,10 +56,9 @@ struct LivePlayer: Decodable, Sendable, Identifiable, Hashable {
         var deaths: Int
         var assists: Int
         var creepScore: Int
-        var wardScore: Double?
 
-        init(kills: Int, deaths: Int, assists: Int, creepScore: Int, wardScore: Double?) {
-            self.kills = kills; self.deaths = deaths; self.assists = assists; self.creepScore = creepScore; self.wardScore = wardScore
+        init(kills: Int, deaths: Int, assists: Int, creepScore: Int) {
+            self.kills = kills; self.deaths = deaths; self.assists = assists; self.creepScore = creepScore
         }
 
         init(from decoder: Decoder) throws {
@@ -77,28 +67,19 @@ struct LivePlayer: Decodable, Sendable, Identifiable, Hashable {
             deaths = (try? c.decodeIfPresent(Int.self, forKey: .deaths)) ?? 0
             assists = (try? c.decodeIfPresent(Int.self, forKey: .assists)) ?? 0
             creepScore = (try? c.decodeIfPresent(Int.self, forKey: .creepScore)) ?? 0
-            wardScore = try? c.decodeIfPresent(Double.self, forKey: .wardScore)
         }
 
-        private enum CodingKeys: String, CodingKey { case kills, deaths, assists, creepScore, wardScore }
+        private enum CodingKeys: String, CodingKey { case kills, deaths, assists, creepScore }
     }
     struct Item: Decodable, Sendable, Hashable {
         var itemID: Int
         var count: Int?
         var slot: Int?
-        var displayName: String?
-    }
-    struct Spell: Decodable, Sendable, Hashable { var displayName: String? }
-    struct Spells: Decodable, Sendable, Hashable { var summonerSpellOne: Spell?; var summonerSpellTwo: Spell? }
-    struct Runes: Decodable, Sendable, Hashable {
-        struct Rune: Decodable, Sendable, Hashable { var id: Int?; var displayName: String? }
-        var keystone: Rune?
     }
 
     var championName: String
     var riotId: String?
     var riotIdGameName: String?
-    var riotIdTagLine: String?
     var summonerName: String?
     var team: String
     var level: Int
@@ -107,19 +88,16 @@ struct LivePlayer: Decodable, Sendable, Identifiable, Hashable {
     var position: String?
     var scores: Scores
     var items: [Item]
-    var summonerSpells: Spells?
-    var runes: Runes?
 
     var id: String { (riotId ?? summonerName ?? "") + championName }
     var name: String { riotIdGameName ?? riotId ?? summonerName ?? championName }
 
-    init(championName: String, riotId: String?, riotIdGameName: String?, riotIdTagLine: String?, summonerName: String?,
-         team: String, level: Int, isDead: Bool, respawnTimer: Double?, position: String?, scores: Scores,
-         items: [Item], summonerSpells: Spells?, runes: Runes?) {
+    init(championName: String, riotId: String?, riotIdGameName: String?, summonerName: String?,
+         team: String, level: Int, isDead: Bool, respawnTimer: Double?, position: String?, scores: Scores, items: [Item]) {
         self.championName = championName; self.riotId = riotId; self.riotIdGameName = riotIdGameName
-        self.riotIdTagLine = riotIdTagLine; self.summonerName = summonerName; self.team = team; self.level = level
+        self.summonerName = summonerName; self.team = team; self.level = level
         self.isDead = isDead; self.respawnTimer = respawnTimer; self.position = position; self.scores = scores
-        self.items = items; self.summonerSpells = summonerSpells; self.runes = runes
+        self.items = items
     }
 
     /// Missing optional data falls back to defaults so one odd entry never drops a real player.
@@ -128,21 +106,18 @@ struct LivePlayer: Decodable, Sendable, Identifiable, Hashable {
         championName = try c.decode(String.self, forKey: .championName)
         riotId = try? c.decodeIfPresent(String.self, forKey: .riotId)
         riotIdGameName = try? c.decodeIfPresent(String.self, forKey: .riotIdGameName)
-        riotIdTagLine = try? c.decodeIfPresent(String.self, forKey: .riotIdTagLine)
         summonerName = try? c.decodeIfPresent(String.self, forKey: .summonerName)
         team = (try? c.decodeIfPresent(String.self, forKey: .team)) ?? ""
         level = (try? c.decodeIfPresent(Int.self, forKey: .level)) ?? 1
         isDead = (try? c.decodeIfPresent(Bool.self, forKey: .isDead)) ?? false
         respawnTimer = try? c.decodeIfPresent(Double.self, forKey: .respawnTimer)
         position = try? c.decodeIfPresent(String.self, forKey: .position)
-        scores = (try? c.decodeIfPresent(Scores.self, forKey: .scores)) ?? Scores(kills: 0, deaths: 0, assists: 0, creepScore: 0, wardScore: nil)
+        scores = (try? c.decodeIfPresent(Scores.self, forKey: .scores)) ?? Scores(kills: 0, deaths: 0, assists: 0, creepScore: 0)
         items = ((try? c.decodeIfPresent([Lossy<Item>].self, forKey: .items)) ?? []).compactMap(\.value)
-        summonerSpells = try? c.decodeIfPresent(Spells.self, forKey: .summonerSpells)
-        runes = try? c.decodeIfPresent(Runes.self, forKey: .runes)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case championName, riotId, riotIdGameName, riotIdTagLine, summonerName, team, level, isDead, respawnTimer, position, scores, items, summonerSpells, runes
+        case championName, riotId, riotIdGameName, summonerName, team, level, isDead, respawnTimer, position, scores, items
     }
 }
 
@@ -164,19 +139,12 @@ struct LiveEvent: Decodable, Sendable, Hashable {
     var EventName: String
     var EventTime: Double
     var KillerName: String?
-    var VictimName: String?
     var DragonType: String?
     var Stolen: String?
     var InhibKilled: String?
-    var TurretKilled: String?
-    var Assisters: [String]?
-    var KillStreak: Int?
-    var Acer: String?
     var AcingTeam: String?
 }
 
 struct LiveGameStats: Decodable, Sendable {
-    var gameMode: String?
     var gameTime: Double
-    var mapNumber: Int?
 }

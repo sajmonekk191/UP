@@ -32,16 +32,33 @@ func winRateColor(_ value: Double?) -> Color {
 
 // MARK: - Layout
 
+/// Link back to the page that opened a sub-page.
+struct BackLink {
+    var title: String
+    var action: () -> Void
+}
+
 /// Screen with a title row and scrolling content on the navy backdrop.
 struct Screen<Trailing: View, Content: View>: View {
+    @Environment(\.contentBottomInset) private var bottomInset
     let title: String
     var subtitle: String?
+    var back: BackLink?
     @ViewBuilder var trailing: Trailing
     @ViewBuilder var content: Content
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.gap) {
+                if let back {
+                    Button(action: back.action) {
+                        Label(back.title, systemImage: "chevron.left").font(.callout.weight(.semibold)).foregroundStyle(Theme.accentBright)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).handCursor()
+                    .help(tr("Back (⌘[)"))
+                    .padding(.bottom, -8)
+                }
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(title).font(.display).foregroundStyle(Theme.text)
@@ -53,7 +70,7 @@ struct Screen<Trailing: View, Content: View>: View {
                 .padding(.bottom, 4)
                 content
             }
-            .padding(.horizontal, 28).padding(.vertical, 24)
+            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 24 + bottomInset)
             .frame(maxWidth: 1280, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
@@ -62,13 +79,37 @@ struct Screen<Trailing: View, Content: View>: View {
 }
 
 extension Screen where Trailing == EmptyView {
-    init(title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
-        self.init(title: title, subtitle: subtitle, trailing: { EmptyView() }, content: content)
+    init(title: String, subtitle: String? = nil, back: BackLink? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title: title, subtitle: subtitle, back: back, trailing: { EmptyView() }, content: content)
+    }
+}
+
+/// Reloads the signed-in player's profile with a spinner while it runs, or says the client is being looked for.
+struct RefreshButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if model.connection != .connected {
+            LoadingNote(text: tr("Looking for client…"))
+        } else {
+            Button { Task { await model.refreshMyProfile() } } label: {
+                if model.isRefreshing {
+                    HStack(spacing: 6) {
+                        Spinner(size: 12, lineWidth: 1.8)
+                        Text(tr("Refresh"))
+                    }
+                } else {
+                    Label(tr("Refresh"), systemImage: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.secondary)
+        }
     }
 }
 
 extension EnvironmentValues {
     @Entry var panelFillsHeight = false
+    @Entry var contentBottomInset: CGFloat = 24
 }
 
 struct Panel<Accessory: View, Content: View>: View {
@@ -433,6 +474,7 @@ struct HeroBanner<Content: View>: View {
                     .offset(y: focus)
             }
             .clipped()
+            .allowsHitTesting(false)
             LinearGradient(colors: [Theme.background.opacity(0.1), Theme.background.opacity(0.75), Theme.background],
                            startPoint: .top, endPoint: .bottom)
             LinearGradient(colors: [Theme.background.opacity(0.85), .clear], startPoint: .leading, endPoint: .center)
@@ -448,104 +490,5 @@ extension String {
     var strippingTags: String {
         replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
             .replacingOccurrences(of: "&nbsp;", with: " ")
-    }
-}
-
-// MARK: - Player card
-
-/// Porofessor-style player row used in champ select, loading screen and lookup.
-struct PlayerCard: View {
-    @Environment(AppModel.self) private var model
-    let profile: PlayerProfile?
-    let championId: Int?
-    var lane: Lane?
-    var fallbackName: String?
-    var side: Color = Theme.ally
-    var isMe = false
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            ZStack(alignment: .bottomTrailing) {
-                ChampionIcon(id: championId, size: 52, ring: isMe ? Theme.gold : nil)
-                if let lane {
-                    Image(systemName: lane.symbol).font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Theme.text).padding(4)
-                        .background(Theme.raised, in: Circle()).overlay(Circle().strokeBorder(Theme.hairlineStrong))
-                        .offset(x: 5, y: 5)
-                }
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text(profile?.summoner?.riotId ?? fallbackName ?? tr("Hidden player"))
-                        .font(.headline).foregroundStyle(Theme.text).lineLimit(1)
-                    if let level = profile?.summoner?.summonerLevel {
-                        Text("\(level)").font(.caption2.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                            .padding(.horizontal, 5).padding(.vertical, 1).background(Theme.raised, in: Capsule())
-                    }
-                    if isMe { Chip(text: tr("YOU"), tone: .gold) }
-                }
-                if let profile {
-                    FlowTags(tags: profile.tags)
-                } else if fallbackName == nil {
-                    Text(tr("Name hidden in ranked champ select")).font(.caption).foregroundStyle(Theme.textMuted)
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .frame(minWidth: 170, alignment: .leading)
-            Spacer(minLength: 8)
-            if let profile {
-                let queue = profile.solo?.isRanked == true ? profile.solo : profile.flex
-                HStack(spacing: 8) {
-                    RankEmblem(tier: queue?.isRanked == true ? queue?.tier : nil, size: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(queue?.label ?? tr("Unranked")).font(.caption.weight(.semibold)).foregroundStyle(Theme.text)
-                        Text(queue.flatMap { $0.games > 0 ? tr("%@ · %d games", percent($0.winRate, digits: 0), $0.games) : nil } ?? "—")
-                            .font(.caption2).foregroundStyle(winRateColor(queue?.winRate))
-                    }
-                }
-                .frame(width: 150, alignment: .leading)
-                VStack(alignment: .leading, spacing: 4) {
-                    FormStrip(form: Array(profile.form.prefix(8)), size: 13)
-                    let kda = profile.averageKDA
-                    Text("\(decimal(kda.k)) / \(decimal(kda.d)) / \(decimal(kda.a))")
-                        .font(.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary)
-                }
-                .frame(width: 130, alignment: .leading)
-                championStat(profile).frame(width: 110, alignment: .leading)
-                HStack(spacing: 3) {
-                    ForEach(profile.champions.prefix(3)) { record in
-                        ChampionIcon(id: record.championId, size: 22)
-                            .help(tr("%@: %d games, %@", model.gameData.championName(record.championId), record.games, percent(record.winRate, digits: 0)))
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 10).padding(.horizontal, 12)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(alignment: .leading) {
-            UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12).fill(side).frame(width: 3)
-        }
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(isMe ? Theme.gold.opacity(0.5) : Theme.hairline))
-    }
-
-    @ViewBuilder
-    private func championStat(_ profile: PlayerProfile) -> some View {
-        if let championId, championId > 0 {
-            if let record = profile.record(for: championId) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(tr("ON CHAMPION")).font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
-                    Text("\(record.games)× · \(percent(record.winRate, digits: 0))").font(.caption.weight(.semibold))
-                        .foregroundStyle(winRateColor(record.winRate))
-                }
-            } else if let mastery = profile.masteries.first(where: { $0.championId == championId }) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("MASTERY").font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
-                    Text("M\(mastery.championLevel ?? 0) · \(compact(Double(mastery.championPoints ?? 0)))").font(.caption.weight(.semibold)).foregroundStyle(Theme.gold)
-                }
-            } else if profile.recentGames.count >= 10 {
-                Chip(text: tr("New champion"), tone: .gold)
-            }
-        }
     }
 }

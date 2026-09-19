@@ -71,11 +71,16 @@ enum SelfTest {
         let tiers = try? await BuildService.tierList()
         check("Tier list", (tiers?.count ?? 0) > 100, "\(tiers?.count ?? 0) entries")
 
+        let accounts = try? await OpggAccounts.search("faker", region: .euw)
+        check("op.gg account search", !(accounts ?? []).isEmpty, "\(accounts?.count ?? 0) accounts named faker on EUW")
+        let remote = try? await OpggAccounts.profile(PlayerQuery(riotId: "Hide on bush#KR1", region: .kr))
+        check("op.gg profile (KR)", (remote?.recent.count ?? 0) > 0, "\(remote?.solo?.label ?? "-"), \(remote?.recent.count ?? 0) games")
+
         let socket = LCUWebSocket(credentials: credentials)
         let connected = await withTaskGroup(of: Bool.self) { group in
             group.addTask {
                 do {
-                    for try await _ in socket.events() { return true }
+                    for try await _ in socket.events(for: ["/lol-gameflow/v1/gameflow-phase"]) { return true }
                     return true
                 } catch { return false }
             }

@@ -9,7 +9,6 @@ struct Summoner: Decodable, Hashable, Sendable {
     var tagLine: String?
     var summonerLevel: Int?
     var profileIconId: Int?
-    var privacy: String?
 
     var riotId: String {
         guard let gameName, !gameName.isEmpty else { return tr("Unknown player") }
@@ -18,17 +17,13 @@ struct Summoner: Decodable, Hashable, Sendable {
 }
 
 struct RankedQueue: Decodable, Hashable, Sendable {
-    var queueType: String?
     var tier: String?
     var division: String?
     var leaguePoints: Int?
     var wins: Int?
     var losses: Int?
-    var isProvisional: Bool?
     var previousSeasonEndTier: String?
     var previousSeasonEndDivision: String?
-    var highestTier: String?
-    var highestDivision: String?
 
     var isRanked: Bool { !(tier ?? "").isEmpty && tier != "NONE" }
 
@@ -45,7 +40,6 @@ struct RankedQueue: Decodable, Hashable, Sendable {
 
 struct RankedStats: Decodable, Sendable {
     var queueMap: [String: RankedQueue]?
-    var highestRankedEntrySR: RankedQueue?
 
     var solo: RankedQueue? { queueMap?["RANKED_SOLO_5x5"] }
     var flex: RankedQueue? { queueMap?["RANKED_FLEX_SR"] }
@@ -56,13 +50,12 @@ struct MatchHistoryResponse: Decodable, Sendable {
     var games: Games?
 }
 
-struct HistoryGame: Decodable, Identifiable, Hashable, Sendable {
+struct HistoryGame: Codable, Identifiable, Hashable, Sendable {
     var gameId: Int
     var gameCreation: Double?
     var gameDuration: Int?
     var gameMode: String?
     var gameType: String?
-    var gameVersion: String?
     var queueId: Int?
     var participants: [HistoryParticipant]?
     var participantIdentities: [ParticipantIdentity]?
@@ -80,14 +73,13 @@ struct HistoryGame: Decodable, Identifiable, Hashable, Sendable {
     var isCountable: Bool { !isRemake && gameType != "CUSTOM_GAME" && gameMode != "PRACTICETOOL" }
 }
 
-struct HistoryParticipant: Decodable, Hashable, Sendable {
-    struct Timeline: Decodable, Hashable, Sendable { var lane: String?; var role: String? }
+struct HistoryParticipant: Codable, Hashable, Sendable {
+    struct Timeline: Codable, Hashable, Sendable { var lane: String?; var role: String? }
     var participantId: Int?
     var teamId: Int?
     var championId: Int
     var spell1Id: Int?
     var spell2Id: Int?
-    var highestAchievedSeasonTier: String?
     var stats: HistoryStats
     var timeline: Timeline?
 
@@ -104,34 +96,30 @@ struct HistoryParticipant: Decodable, Hashable, Sendable {
     }
 }
 
-struct ParticipantIdentity: Decodable, Hashable, Sendable {
-    struct Player: Decodable, Hashable, Sendable {
+struct ParticipantIdentity: Codable, Hashable, Sendable {
+    struct Player: Codable, Hashable, Sendable {
         var puuid: String?
         var gameName: String?
         var tagLine: String?
-        var profileIcon: Int?
         var riotId: String { [gameName, tagLine].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "#") }
     }
     var participantId: Int
     var player: Player
 }
 
-struct HistoryTeam: Decodable, Hashable, Sendable {
-    struct Ban: Decodable, Hashable, Sendable { var championId: Int; var pickTurn: Int? }
+struct HistoryTeam: Codable, Hashable, Sendable {
+    struct Ban: Codable, Hashable, Sendable { var championId: Int }
     var teamId: Int
     var win: String?
     var bans: [Ban]?
     var baronKills: Int?
     var dragonKills: Int?
     var towerKills: Int?
-    var inhibitorKills: Int?
     var riftHeraldKills: Int?
     var hordeKills: Int?
-    var firstBlood: Bool?
-    var firstTower: Bool?
 }
 
-struct HistoryStats: Decodable, Hashable, Sendable {
+struct HistoryStats: Codable, Hashable, Sendable {
     var win: Bool?
     var kills: Int?
     var deaths: Int?
@@ -142,53 +130,36 @@ struct HistoryStats: Decodable, Hashable, Sendable {
     var goldEarned: Int?
     var totalDamageDealtToChampions: Int?
     var visionScore: Int?
-    var wardsPlaced: Int?
-    var wardsKilled: Int?
-    var visionWardsBoughtInGame: Int?
     var totalDamageTaken: Int?
     var damageSelfMitigated: Int?
     var damageDealtToObjectives: Int?
-    var damageDealtToTurrets: Int?
-    var physicalDamageDealtToChampions: Int?
-    var magicDamageDealtToChampions: Int?
-    var trueDamageDealtToChampions: Int?
-    var totalHeal: Int?
-    var timeCCingOthers: Int?
-    var largestMultiKill: Int?
     var largestKillingSpree: Int?
-    var doubleKills: Int?, tripleKills: Int?, quadraKills: Int?, pentaKills: Int?
+    var tripleKills: Int?, quadraKills: Int?, pentaKills: Int?
     var firstBloodKill: Bool?
     var turretKills: Int?
     var item0: Int?, item1: Int?, item2: Int?, item3: Int?, item4: Int?, item5: Int?, item6: Int?
     var perk0: Int?
-    var perkPrimaryStyle: Int?
     var perkSubStyle: Int?
-
-    var multiKillLabel: String? {
-        if (pentaKills ?? 0) > 0 { return "PENTAKILL" }
-        if (quadraKills ?? 0) > 0 { return "Quadra kill" }
-        if (tripleKills ?? 0) > 0 { return "Triple kill" }
-        return nil
-    }
 
     var items: [Int] { [item0, item1, item2, item3, item4, item5, item6].map { $0 ?? 0 } }
     var cs: Int { (totalMinionsKilled ?? 0) + (neutralMinionsKilled ?? 0) }
     var kda: Double { Double((kills ?? 0) + (assists ?? 0)) / Double(max(deaths ?? 0, 1)) }
 }
 
+struct RegionLocale: Decodable, Sendable {
+    var webRegion: String?
+}
+
 struct ChampionMastery: Decodable, Hashable, Sendable {
     var championId: Int
     var championLevel: Int?
     var championPoints: Int?
-    var lastPlayTime: Double?
 }
 
 struct Friend: Decodable, Hashable, Sendable {
     var gameName: String?
     var gameTag: String?
-    var puuid: String?
     var icon: Int?
-    var availability: String?
 
     var riotId: String? {
         guard let gameName, !gameName.isEmpty, let gameTag, !gameTag.isEmpty else { return nil }
@@ -201,7 +172,6 @@ struct Friend: Decodable, Hashable, Sendable {
 struct ReadyCheck: Decodable, Sendable {
     var state: String?
     var playerResponse: String?
-    var timer: Double?
 }
 
 struct ChampSelectSession: Decodable, Sendable, Equatable {
@@ -210,9 +180,6 @@ struct ChampSelectSession: Decodable, Sendable, Equatable {
     var theirTeam: [ChampSelectPlayer]?
     var actions: [[ChampSelectAction]]?
     var timer: ChampSelectTimer?
-    var benchChampions: [BenchChampion]?
-    var benchEnabled: Bool?
-    var isCustomGame: Bool?
 
     var me: ChampSelectPlayer? { myTeam.first { $0.cellId == localPlayerCellId } }
 
@@ -228,10 +195,6 @@ struct ChampSelectPlayer: Decodable, Sendable, Hashable, Identifiable {
     var assignedPosition: String?
     var puuid: String?
     var gameName: String?
-    var tagLine: String?
-    var spell1Id: Int?
-    var spell2Id: Int?
-    var summonerId: Int?
 
     var id: Int { cellId }
     var displayedChampionId: Int { (championId ?? 0) != 0 ? championId! : (championPickIntent ?? 0) }
@@ -248,24 +211,18 @@ struct ChampSelectAction: Decodable, Sendable, Hashable {
 }
 
 struct ChampSelectTimer: Decodable, Sendable, Equatable {
-    var phase: String?
     var adjustedTimeLeftInPhase: Double?
     var internalNowInEpochMs: Double?
-}
-
-struct BenchChampion: Decodable, Sendable, Hashable {
-    var championId: Int
 }
 
 struct GameflowSession: Decodable, Sendable {
     struct Map: Decodable, Sendable { var id: Int? }
     struct GameData: Decodable, Sendable {
-        struct Queue: Decodable, Sendable { var id: Int?; var gameMode: String?; var description: String? }
+        struct Queue: Decodable, Sendable { var gameMode: String? }
         var queue: Queue?
         var teamOne: [GameTeamPlayer]?
         var teamTwo: [GameTeamPlayer]?
     }
-    var phase: String?
     var map: Map?
     var gameData: GameData?
 }
@@ -273,8 +230,6 @@ struct GameflowSession: Decodable, Sendable {
 struct GameTeamPlayer: Decodable, Sendable, Hashable {
     var puuid: String?
     var championId: Int?
-    var selectedPosition: String?
-    var summonerName: String?
 }
 
 // MARK: - Perks
@@ -293,8 +248,6 @@ struct PerkPage: Decodable, Identifiable, Sendable, Hashable {
 
 struct PerkInventory: Decodable, Sendable {
     var canAddCustomPage: Bool?
-    var ownedPageCount: Int?
-    var customPageCount: Int?
 }
 
 struct RecommendedPage: Decodable, Sendable, Hashable {
@@ -304,7 +257,6 @@ struct RecommendedPage: Decodable, Sendable, Hashable {
     var secondaryPerkStyleId: Int
     var summonerSpellIds: [Int]?
     var position: String?
-    var primaryRecommendationAttribute: String?
     var keystone: Perk?
 }
 
@@ -328,7 +280,6 @@ struct ChampionSummary: Decodable, Sendable, Hashable {
     var id: Int
     var name: String
     var alias: String
-    var squarePortraitPath: String?
     var roles: [String]?
 }
 
@@ -356,7 +307,6 @@ struct ItemInfo: Decodable, Sendable {
 struct SummonerSpellInfo: Decodable, Sendable {
     var id: Int
     var name: String
-    var cooldown: Double?
     var iconPath: String?
 }
 
@@ -424,11 +374,10 @@ struct ChampionDetail: Decodable, Sendable {
         var description: String?
         var cooldownCoefficients: [Double]?
         var costCoefficients: [Double]?
-        var range: [Double]?
         var maxLevel: Int?
         var id: String { spellKey }
     }
-    struct Skin: Decodable, Sendable { var splashPath: String?; var uncenteredSplashPath: String? }
+    struct Skin: Decodable, Sendable { var splashPath: String?; var uncenteredSplashPath: String?; var tilePath: String? }
 
     var id: Int
     var name: String
@@ -441,4 +390,5 @@ struct ChampionDetail: Decodable, Sendable {
     var skins: [Skin]?
 
     var splashPath: String? { skins?.first?.splashPath ?? skins?.first?.uncenteredSplashPath }
+    var tilePath: String? { skins?.first?.tilePath }
 }

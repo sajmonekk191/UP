@@ -89,6 +89,7 @@ final class DraftAdvisor {
     var laneOverride: Lane? { didSet { if oldValue != laneOverride { suggestionKey = "" } } }
 
     private var owned: Set<Int> = []
+    private var lastBuilds: [Int: ChampionBuild] = [:]
     private var suggestionKey = ""
     private var focusKey = ""
     private var compKey = ""
@@ -100,7 +101,7 @@ final class DraftAdvisor {
     func reset() {
         suggestions = []; bans = []; builds = [:]; riotRunes = []; gamePlan = []; compTips = []
         focusChampion = nil; focusLocked = false; laneOpponent = nil; laneOverride = nil
-        suggestionKey = ""; focusKey = ""; compKey = ""; owned = []
+        suggestionKey = ""; focusKey = ""; compKey = ""; owned = []; lastBuilds = [:]
         ally = TeamComposition(); enemy = TeamComposition()
     }
 
@@ -150,7 +151,7 @@ final class DraftAdvisor {
     private func refreshSuggestions(enemyIds: [Int], taken: Set<Int>, allyIds: [Int], model: AppModel) async {
         guard let lane, let client = model.client else { return }
         loadingSuggestions = true
-        defer { loadingSuggestions = false }
+        defer { if !Task.isCancelled { loadingSuggestions = false } }
 
         if owned.isEmpty, let data = try? await client.request("GET", "/lol-champions/v1/owned-champions-minimal"),
            let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
@@ -176,11 +177,14 @@ final class DraftAdvisor {
         var results: [PickSuggestion] = []
         await withTaskGroup(of: (TierListEntry, ChampionBuild?).self) { group in
             for entry in candidates {
-                group.addTask { (entry, try? await BuildService.opggBuild(championId: entry.championId, lane: lane, mode: .ranked)) }
+                group.addTask {
+                    async let build = try? BuildService.opggBuild(championId: entry.championId, lane: lane, mode: .ranked)
+                    _ = await model.gameData.detail(entry.championId, client: client)
+                    return (entry, await build)
+                }
             }
             for await (entry, build) in group {
-                if let build { BuildCacheSnapshot.last[entry.championId] = build }
-                _ = await model.gameData.detail(entry.championId, client: client)
+                if let build { lastBuilds[entry.championId] = build }
                 results.append(score(entry, build: build, enemyIds: enemyIds, opponent: opponent, model: model))
             }
         }
@@ -232,7 +236,7 @@ final class DraftAdvisor {
     private func banSuggestions(laneEntries: [TierListEntry], taken: Set<Int>, model: AppModel) -> [BanSuggestion] {
         var result: [BanSuggestion] = []
         let topPicks = Set(suggestions.prefix(8).map(\.championId))
-        if let best = suggestions.first, let build = BuildCacheSnapshot.last[best.championId] {
+        if let best = suggestions.first, let build = lastBuilds[best.championId] {
             for counter in build.counters.sorted(by: { $0.winRate < $1.winRate }).prefix(3)
             where counter.winRate < 0.47 && !taken.contains(counter.championId) && !topPicks.contains(counter.championId) {
                 let wr = laneEntries.first { $0.championId == counter.championId }
@@ -257,7 +261,7 @@ final class DraftAdvisor {
         gamePlan = []
         guard champion > 0, let client = model.client else { return }
         loadingFocus = true
-        defer { loadingFocus = false }
+        defer { if !Task.isCancelled { loadingFocus = false } }
         _ = await model.gameData.detail(champion, client: client)
 
         let mode = model.queueMode
@@ -274,7 +278,7 @@ final class DraftAdvisor {
         guard !Task.isCancelled else { return }
         builds = loaded
         riotRunes = await riot ?? []
-        if let build = loaded[.emeraldPlus] { BuildCacheSnapshot.last[champion] = build }
+        if let build = loaded[.emeraldPlus] { lastBuilds[champion] = build }
         gamePlan = plan(champion: champion, enemyIds: enemyIds, model: model)
     }
 
@@ -314,7 +318,7 @@ final class DraftAdvisor {
     // MARK: Compositions
 
     private func refreshComps(allyIds: [Int], enemyIds: [Int], model: AppModel) async {
-        for id in allyIds + enemyIds { _ = await model.gameData.detail(id, client: model.client) }
+        await model.gameData.prefetchDetails(allyIds + enemyIds, client: model.client)
         ally = TeamComposition(champions: allyIds, details: model.gameData.details)
         enemy = TeamComposition(champions: enemyIds, details: model.gameData.details)
         var tips: [Tip] = []
@@ -334,8 +338,3 @@ final class DraftAdvisor {
     }
 }
 
-/// Last emerald+ build per champion, used for counter-based ban hints.
-@MainActor
-enum BuildCacheSnapshot {
-    static var last: [Int: ChampionBuild] = [:]
-}

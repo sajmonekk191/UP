@@ -27,22 +27,28 @@ struct BuildDetails: View {
             if let build {
                 ItemPanels(build: build)
                 if let skill = build.skillOrder { SkillOrderPanel(skill: skill) }
-                HStack(alignment: .top, spacing: Theme.gap) {
-                    if !build.gameLengths.isEmpty {
-                        Panel(title: tr("Win rate by game length"), symbol: "hourglass") { GameLengthChart(points: build.gameLengths) }
+            }
+            Deferred {
+                VStack(alignment: .leading, spacing: Theme.gap) {
+                    if let build {
+                        HStack(alignment: .top, spacing: Theme.gap) {
+                            if !build.gameLengths.isEmpty {
+                                Panel(title: tr("Win rate by game length"), symbol: "hourglass") { GameLengthChart(points: build.gameLengths) }
+                            }
+                            if build.patchTrend.count > 1 {
+                                Panel(title: tr("Win rate across patches"), symbol: "chart.line.uptrend.xyaxis") { PatchTrendChart(points: build.patchTrend) }
+                            }
+                        }
+                        if !build.counters.isEmpty {
+                            HStack(alignment: .top, spacing: Theme.gap) {
+                                MatchupList(title: tr("Hardest matchups"), symbol: "hand.thumbsdown.fill", matchups: Array(build.counters.sorted { $0.winRate < $1.winRate }.prefix(6)))
+                                MatchupList(title: tr("Easiest matchups"), symbol: "hand.thumbsup.fill", matchups: Array(build.counters.sorted { $0.winRate > $1.winRate }.prefix(6)))
+                            }
+                        }
                     }
-                    if build.patchTrend.count > 1 {
-                        Panel(title: tr("Win rate across patches"), symbol: "chart.line.uptrend.xyaxis") { PatchTrendChart(points: build.patchTrend) }
-                    }
-                }
-                if !build.counters.isEmpty {
-                    HStack(alignment: .top, spacing: Theme.gap) {
-                        MatchupList(title: tr("Hardest matchups"), symbol: "hand.thumbsdown.fill", matchups: Array(build.counters.sorted { $0.winRate < $1.winRate }.prefix(6)))
-                        MatchupList(title: tr("Easiest matchups"), symbol: "hand.thumbsup.fill", matchups: Array(build.counters.sorted { $0.winRate > $1.winRate }.prefix(6)))
-                    }
+                    if showChampionInfo { ChampionInfoPanel(championId: championId) }
                 }
             }
-            if showChampionInfo { ChampionInfoPanel(championId: championId) }
         }
     }
 }
@@ -51,7 +57,7 @@ struct BuildHeadline: View {
     let build: ChampionBuild
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 5), spacing: 12) {
+        HStack(spacing: 12) {
             StatTile(label: tr("Win rate"), value: percent(build.winRate), valueColor: winRateColor(build.winRate), trend: build.patchTrend.map(\.winRate))
             StatTile(label: tr("Pick rate"), value: percent(build.pickRate))
             StatTile(label: tr("Ban rate"), value: percent(build.banRate))
@@ -293,6 +299,106 @@ struct ChampionInfoPanel: View {
                         .font(.caption2).foregroundStyle(Theme.textMuted)
                 }
             }
+        }
+    }
+}
+
+/// Placeholder in the shape of the build breakdown while it loads.
+struct BuildSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.gap) {
+            HStack(spacing: 12) {
+                ForEach(0..<5, id: \.self) { _ in StatTileSkeleton() }
+            }
+            Panel(title: tr("Runes"), symbol: "circle.hexagongrid.fill") {
+                ForEach(0..<3, id: \.self) { index in
+                    if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                    RuneRowSkeleton()
+                }
+            }
+            HStack(alignment: .top, spacing: Theme.gap) {
+                itemList(tr("Summoner spells"), "sparkles", icons: 2)
+                itemList(tr("Starting items"), "bag.fill", icons: 2)
+                itemList(tr("Boots"), "shoeprints.fill", icons: 1)
+            }
+            Panel(title: tr("Core build"), symbol: "shield.lefthalf.filled") {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(0..<3, id: \.self) { row in
+                        HStack(spacing: 8) {
+                            ForEach(0..<3, id: \.self) { _ in Bone(width: row == 0 ? 40 : 32, height: row == 0 ? 40 : 32, radius: 5) }
+                            Spacer()
+                            MeterSkeleton().frame(width: 200)
+                        }
+                    }
+                }
+                .shimmering()
+            }
+        }
+    }
+
+    private func itemList(_ title: String, _ symbol: String, icons: Int) -> some View {
+        Panel(title: title, symbol: symbol) {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(0..<3, id: \.self) { _ in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 4) {
+                            ForEach(0..<icons, id: \.self) { _ in Bone(width: 28, height: 28, radius: 5) }
+                        }
+                        MeterSkeleton()
+                    }
+                }
+            }
+            .shimmering()
+        }
+    }
+}
+
+/// Placeholder in the shape of a rune page row.
+struct RuneRowSkeleton: View {
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: compact ? 8 : 12) {
+            Bone(width: compact ? 34 : 42, height: compact ? 34 : 42, radius: compact ? 17 : 21)
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { _ in Bone(width: compact ? 22 : 26, height: compact ? 22 : 26, radius: compact ? 11 : 13) }
+            }
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 26)
+            Bone(width: 18, height: 18, radius: 9)
+            HStack(spacing: 4) {
+                ForEach(0..<2, id: \.self) { _ in Bone(width: compact ? 20 : 24, height: compact ? 20 : 24, radius: compact ? 10 : 12) }
+            }
+            if !compact {
+                HStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { _ in Bone(width: 16, height: 16, radius: 8) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Bone(width: 104, height: 10, line: 15)
+                    Bone(width: 40, height: 16, radius: 8)
+                }
+                MeterSkeleton().frame(width: compact ? 150 : 190)
+            }
+            .padding(.leading, 6)
+            Spacer()
+            Bone(width: 62, height: 28, radius: 9)
+        }
+        .padding(.vertical, 4)
+        .shimmering()
+    }
+}
+
+/// Placeholder in the shape of a win-rate meter with its labels.
+struct MeterSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Bone(width: 40, height: 10, line: 15)
+                Spacer()
+                Bone(width: 46, height: 7)
+            }
+            Bone(height: 6, radius: 3)
         }
     }
 }

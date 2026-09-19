@@ -122,8 +122,9 @@ struct MatchInsights {
             let lead = enemy.scores.kills - enemy.scores.deaths
             if lead >= 3 { return Threat(championId: id, name: name, detail: tr("Fed %d/%d/%d: don't fight them alone", enemy.scores.kills, enemy.scores.deaths, enemy.scores.assists)) }
             if enemy.level >= (me.level + 2) { return Threat(championId: id, name: name, detail: tr("%d levels ahead of you", enemy.level - me.level)) }
-            let counters = enemy.items.map(\.itemID).filter { LiveGameAnalyzer.counterItems[$0] != nil }
-            if let item = counters.first { return Threat(championId: id, name: name, detail: tr("Has %@", data.items[item]?.name ?? "")) }
+            if let advice = enemy.items.lazy.compactMap({ LiveGameAnalyzer.counterItems[$0.itemID] }).first {
+                return Threat(championId: id, name: name, detail: tr(advice))
+            }
             return nil
         }
     }

@@ -27,14 +27,15 @@ struct PlayerProfile: Sendable, Identifiable {
     var recent: [HistoryGame]
     var champions: [ChampionRecord]
     var masteries: [ChampionMastery] = []
-    var highest: RankedQueue?
     var tags: [Tag] = []
+    /// Server of a profile loaded from op.gg; nil when it came from the signed-in client.
+    var region: Region?
+    /// Ranked champions of the current season, known for op.gg profiles.
+    var seasonChampions: [ChampionRecord] = []
 
     /// Per-minute averages over countable recent games.
     struct Averages: Sendable {
-        var csPerMin = 0.0, damagePerMin = 0.0, goldPerMin = 0.0, visionPerMin = 0.0
-        var damageShareOfGold = 0.0
-        var multikills = 0
+        var csPerMin = 0.0, damagePerMin = 0.0, visionPerMin = 0.0
     }
 
     var averages: Averages {
@@ -45,11 +46,8 @@ struct PlayerProfile: Sendable, Identifiable {
         for (minutes, s) in games {
             a.csPerMin += Double(s.cs) / minutes / n
             a.damagePerMin += Double(s.totalDamageDealtToChampions ?? 0) / minutes / n
-            a.goldPerMin += Double(s.goldEarned ?? 0) / minutes / n
             a.visionPerMin += Double(s.visionScore ?? 0) / minutes / n
-            a.multikills += (s.tripleKills ?? 0) + (s.quadraKills ?? 0) + (s.pentaKills ?? 0)
         }
-        a.damageShareOfGold = a.goldPerMin > 0 ? a.damagePerMin / a.goldPerMin : 0
         return a
     }
 
@@ -112,7 +110,6 @@ actor PlayerScout {
                                     solo: rankedStats?.solo, flex: rankedStats?.flex,
                                     recent: games, champions: Self.championRecords(games.contains(where: \.isCountable) ? games.filter(\.isCountable) : games))
         profile.masteries = (await mastery ?? []).sorted { ($0.championPoints ?? 0) > ($1.championPoints ?? 0) }
-        profile.highest = rankedStats?.highestRankedEntrySR
         profile.tags = profile.usesPracticeGames ? [] : Self.tags(for: profile)
         cache[puuid] = (Date(), profile)
         return profile
@@ -120,12 +117,26 @@ actor PlayerScout {
 
     func invalidate() { cache.removeAll() }
 
+    /// Profile on any server from op.gg, cached for five minutes.
+    func remoteProfile(_ query: PlayerQuery) async -> PlayerProfile? {
+        let key = "\(query.region.rawValue)|\(query.riotId.lowercased())"
+        if let hit = cache[key], Date().timeIntervalSince(hit.date) < 300 { return hit.profile }
+        guard let profile = try? await OpggAccounts.profile(query) else { return nil }
+        cache[key] = (Date(), profile)
+        return profile
+    }
+
     /// Full 10-player details of one match.
     func game(_ gameId: Int, client: LCUClient) async -> HistoryGame? {
         if let cached = details[gameId] { return cached }
         let game: HistoryGame? = try? await client.get("/lol-match-history/v1/games/\(gameId)")
         details[gameId] = game
         return game
+    }
+
+    /// Details already fetched for these games, keyed by game id.
+    func details(for ids: [Int]) -> [Int: HistoryGame] {
+        details.filter { ids.contains($0.key) }
     }
 
     /// Grades the player in each game against everyone else in that match.
@@ -143,7 +154,7 @@ actor PlayerScout {
         }
     }
 
-    private static func championRecords(_ games: [HistoryGame]) -> [PlayerProfile.ChampionRecord] {
+    static func championRecords(_ games: [HistoryGame]) -> [PlayerProfile.ChampionRecord] {
         var records: [Int: PlayerProfile.ChampionRecord] = [:]
         for game in games where !game.isRemake {
             guard let me = game.me else { continue }
@@ -158,7 +169,7 @@ actor PlayerScout {
         return records.values.sorted { $0.games > $1.games }
     }
 
-    private static func tags(for p: PlayerProfile) -> [PlayerProfile.Tag] {
+    static func tags(for p: PlayerProfile) -> [PlayerProfile.Tag] {
         var tags: [PlayerProfile.Tag] = []
         let games = p.recentGames.count
 

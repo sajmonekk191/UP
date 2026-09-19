@@ -1,13 +1,15 @@
 import SwiftUI
 
-struct DashboardView: View {
+struct DashboardView: View, Equatable {
     @Environment(AppModel.self) private var model
     var showHistory: () -> Void
 
+    /// The overview only changes with the model it observes; the history action is always the same.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
+
     var body: some View {
         Screen(title: tr("Overview"), subtitle: model.connection != .connected ? tr("Waiting for the League client…") : model.phase == "None" ? tr("Connected to the client") : tr("Connected to the client · %@", model.phaseTitle)) {
-            Button { Task { await model.refreshMyProfile() } } label: { Label(tr("Refresh"), systemImage: "arrow.clockwise") }
-                .buttonStyle(.secondary)
+            RefreshButton()
         } content: {
             profileHero
             if let profile = model.myProfile {
@@ -26,11 +28,50 @@ struct DashboardView: View {
                         masteryPanel
                         championsPanel(profile).environment(\.panelFillsHeight, true)
                     }
-                    .frame(width: 360)
+                    .frame(width: 340)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+            } else {
+                skeleton
             }
         }
+    }
+
+    /// Layout of the loaded overview with placeholders, which only shimmer while the client is connected and loading.
+    private var skeleton: some View {
+        VStack(spacing: Theme.gap) {
+            HStack(spacing: 12) {
+                ForEach(0..<6, id: \.self) { _ in StatTileSkeleton() }
+            }
+            HStack(alignment: .top, spacing: Theme.gap) {
+                Panel(title: tr("Recent matches"), symbol: "clock.arrow.circlepath") {
+                    MatchListSkeleton(count: 8)
+                }
+                .environment(\.panelFillsHeight, true)
+                VStack(spacing: Theme.gap) {
+                    AutomationPanel()
+                    Panel(title: tr("Mastery"), symbol: "star.fill") {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 12) {
+                            ForEach(0..<8, id: \.self) { _ in
+                                VStack(spacing: 4) {
+                                    Bone(width: 44, height: 44, radius: 10.5)
+                                    Bone(width: 22, height: 8, line: 13)
+                                    Bone(width: 30, height: 7, line: 12)
+                                }
+                            }
+                        }
+                        .shimmering()
+                    }
+                    Panel(title: tr("Most played champions"), symbol: "person.crop.square.filled.and.at.rectangle") {
+                        RowsSkeleton(trailing: 72)
+                    }
+                    .environment(\.panelFillsHeight, true)
+                }
+                .frame(width: 340)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .environment(\.shimmers, model.connection == .connected)
     }
 
     private var profileHero: some View {
@@ -49,23 +90,39 @@ struct DashboardView: View {
                         }
                     }
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(model.me?.gameName ?? "—").font(.system(size: 32, weight: .bold)).foregroundStyle(Theme.text)
-                        if let tag = model.me?.tagLine { Text("#\(tag)").font(.title3).foregroundStyle(Theme.textSecondary) }
+                    if let me = model.me {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(me.gameName ?? "—").font(.system(size: 32, weight: .bold)).foregroundStyle(Theme.text)
+                            if let tag = me.tagLine { Text("#\(tag)").font(.title3).foregroundStyle(Theme.textSecondary) }
+                        }
+                    } else {
+                        Bone(width: 220, height: 24, line: 38, radius: 6)
                     }
-                    if let profile = model.myProfile { FlowTags(tags: profile.tags) }
+                    if let profile = model.myProfile {
+                        FlowTags(tags: profile.tags)
+                    } else {
+                        HStack(spacing: 4) {
+                            Bone(width: 86, height: 18, radius: 9)
+                            Bone(width: 64, height: 18, radius: 9)
+                        }
+                        .shimmering()
+                    }
                 }
                 Spacer()
-                if let profile = model.myProfile {
-                    HStack(spacing: 28) {
+                HStack(spacing: 28) {
+                    if let profile = model.myProfile {
                         RankBlock(title: tr("Solo / Duo"), queue: profile.solo)
                         RankBlock(title: tr("Flex"), queue: profile.flex)
+                    } else {
+                        RankBlockSkeleton(title: tr("Solo / Duo"))
+                        RankBlockSkeleton(title: tr("Flex"))
                     }
-                    .padding(16)
-                    .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.hairline))
                 }
+                .padding(16)
+                .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.hairline))
             }
+            .environment(\.shimmers, model.connection == .connected)
         }
         .task(id: splashChampion) {
             if let id = splashChampion { _ = await model.gameData.detail(id, client: model.client) }
@@ -79,7 +136,7 @@ struct DashboardView: View {
         let today = profile.recentGames.filter { Calendar.current.isDateInToday($0.date ?? .distantPast) }
         let todayWins = today.filter { $0.me?.stats.win == true }.count
         func value(_ text: String) -> String { hasGames ? text : "—" }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
+        return HStack(spacing: 12) {
             if profile.usesPracticeGames {
                 StatTile(label: tr("Win rate"), value: "—", sub: tr("Practice games have no result"))
                 StatTile(label: tr("Today"), value: today.isEmpty ? "—" : "\(today.count)", sub: today.isEmpty ? tr("No games yet") : tr("games played today"))
@@ -151,6 +208,36 @@ struct DashboardView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Latest matches of the overview with their grades; the full list opens as match history.
+private struct RecentMatchesPanel: View {
+    @Environment(AppModel.self) private var model
+    let games: [HistoryGame]
+    var showAll: () -> Void
+
+    var body: some View {
+        Panel(title: tr("Recent matches"), symbol: "clock.arrow.circlepath") {
+            HStack(spacing: 12) {
+                if let average = AverageGrade.mean(games, model.myPerformance) { AverageGrade(score: average) }
+                Button(action: showAll) {
+                    HStack(spacing: 4) {
+                        Text(tr("All matches"))
+                        Image(systemName: "arrow.right")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accentBright)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).handCursor()
+            }
+        } content: {
+            if games.isEmpty {
+                Text(tr("No matches yet.")).font(.callout).foregroundStyle(Theme.textSecondary)
+            }
+            MatchList(games: games, performances: model.myPerformance, grading: model.isGrading)
         }
     }
 }

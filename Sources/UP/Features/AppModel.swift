@@ -6,10 +6,10 @@ enum ConnectionState: Equatable {
     case connected
 }
 
-struct LogEntry: Identifiable {
+/// Short message shown in the main window after an action or a connection change.
+struct Notice: Identifiable, Equatable {
     enum Kind { case info, success, warning }
     let id = UUID()
-    let date = Date()
     let text: String
     let kind: Kind
 }
@@ -23,16 +23,24 @@ final class AppModel {
     let advisor = DraftAdvisor()
     let hud = HUDState()
     private let scout = PlayerScout()
+    private let archive = MatchArchive()
 
     private(set) var connection: ConnectionState = .searching
     private(set) var client: LCUClient?
     private(set) var me: Summoner?
+    private(set) var clientRegion: Region?
     private(set) var myProfile: PlayerProfile?
     private(set) var myMasteries: [ChampionMastery] = []
     private(set) var myPerformance: [Int: GamePerformance] = [:]
     private(set) var isGrading = false
+    private(set) var olderMatches: [HistoryGame] = []
+    private(set) var isLoadingOlder = false
+    private(set) var olderExhausted = false
+    @ObservationIgnored private var opggPuuids: [String: String] = [:]
+    @ObservationIgnored private var detailCache: [Int: HistoryGame] = [:]
+    private var refreshes = 0
     private(set) var phase = "None"
-    private(set) var logs: [LogEntry] = []
+    private(set) var notices: [Notice] = []
 
     private(set) var champSelect: ChampSelectSession?
     private(set) var teamProfiles: [String: PlayerProfile] = [:]
@@ -41,7 +49,7 @@ final class AppModel {
     private(set) var isPreview = false
     private(set) var isHUDPreview = false
     private(set) var friends: [Friend] = []
-    private(set) var recentPlayers: [String] = UserDefaults.standard.stringArray(forKey: "recentPlayers") ?? []
+    private var recentPlayerKeys: [String] = UserDefaults.standard.stringArray(forKey: "recentPlayers") ?? []
     var hudMode: HUDMode = .hud
     var hudClosed = false
 
@@ -53,6 +61,11 @@ final class AppModel {
     var mapId: Int { gameSession?.map?.id ?? (gameSession?.gameData?.queue?.gameMode == "ARAM" ? 12 : 11) }
     var queueMode: QueueMode { mapId == 12 ? .aram : .ranked }
     var isInChampSelect: Bool { champSelect != nil && (phase == "ChampSelect" || isPreview) }
+    /// Server the search bar looks up accounts on: the one picked in the search bar, else the client's.
+    var searchRegion: Region { settings.searchRegion ?? clientRegion ?? .euw }
+    var recentPlayers: [PlayerQuery] { recentPlayerKeys.compactMap { PlayerQuery(stored: $0, fallback: clientRegion ?? .eune) } }
+    var myQuery: PlayerQuery? { me.map { PlayerQuery(riotId: $0.riotId, region: clientRegion ?? .eune) } }
+    var isRefreshing: Bool { refreshes > 0 }
 
     // MARK: Connection
 
@@ -64,7 +77,7 @@ final class AppModel {
         while true {
             if let credentials = LockfileLocator.find() {
                 await run(credentials)
-                log(tr("Lost connection to the client, searching again…"), .warning)
+                notify(tr("Lost connection to the client, searching again…"), .warning)
             }
             connection = .searching
             client = nil
@@ -80,30 +93,73 @@ final class AppModel {
         ImageCache.shared.client = client
         me = summoner
         connection = .connected
-        log(tr("Connected as %@", summoner.riotId), .success)
+        notify(tr("Connected as %@", summoner.riotId), .success)
 
+        Task { await refreshMyProfile() }
+        clientRegion = (try? await client.get("/riotclient/region-locale") as RegionLocale)?.webRegion.flatMap(Region.init(rawValue:))
         if !gameData.isLoaded { await gameData.load(using: client) }
         await refreshPhase()
-        Task { await refreshMyProfile() }
         Task { friends = (try? await client.get("/lol-chat/v1/friends")) ?? [] }
 
         let socket = LCUWebSocket(credentials: credentials)
         do {
-            for try await event in socket.events() { await handle(event) }
-        } catch {
-            log(tr("Client connection closed: %@", error.localizedDescription), .warning)
-        }
+            for try await event in socket.events(for: Self.eventURIs) { await handle(event) }
+        } catch {}
         stopLiveTracking()
     }
 
     func refreshMyProfile() async {
         guard let client, let me else { return }
+        refreshes += 1
+        defer { refreshes -= 1 }
         await scout.invalidate()
+        async let masteries: [ChampionMastery]? = try? client.get("/lol-champion-mastery/v1/local-player/champion-mastery")
         myProfile = await scout.profile(puuid: me.puuid, client: client, historyCount: 20)
-        myMasteries = (try? await client.get("/lol-champion-mastery/v1/local-player/champion-mastery")) ?? []
+        myMasteries = await masteries ?? []
+        olderMatches = []
+        olderExhausted = false
+        if let recent = myProfile?.recent, !recent.isEmpty { await archive.add(recent, puuid: me.puuid) }
         isGrading = true
         myPerformance = await scout.performances(of: myProfile?.recent ?? [], puuid: me.puuid, client: client)
+        await cacheDetails(of: myProfile?.recent ?? [])
         isGrading = false
+    }
+
+    /// Full match already loaded for this game, so its details can open without waiting.
+    func cachedMatchDetail(_ gameId: Int) -> HistoryGame? { detailCache[gameId] }
+
+    private func cacheDetails(of games: [HistoryGame]) async {
+        detailCache.merge(await scout.details(for: games.map(\.gameId))) { _, new in new }
+    }
+
+    /// Adds the next twenty older matches of the signed-in player, from UP!'s own archive and op.gg, graded like the recent ones.
+    func loadOlderMatches() async {
+        guard let client, let me, let recent = myProfile?.recent, !isLoadingOlder, !olderExhausted else { return }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+        let shown = recent + olderMatches
+        let oldest = shown.compactMap(\.gameCreation).min() ?? Date().timeIntervalSince1970 * 1000
+        let archived = await archive.games(before: oldest, puuid: me.puuid, limit: 20)
+        let remote = await opggGames(before: oldest, riotId: me.riotId).filter { game in !(shown + archived).contains { $0.isSame(as: game) } }
+        let page = Array((archived + remote).sorted { ($0.gameCreation ?? 0) > ($1.gameCreation ?? 0) }.prefix(20))
+        guard !page.isEmpty else { olderExhausted = true; return }
+        var graded = await scout.performances(of: page.filter { $0.participants?.count == 1 }, puuid: me.puuid, client: client)
+        await cacheDetails(of: page)
+        for game in page where graded[game.id] == nil {
+            graded[game.id] = GamePerformance(game: game, puuid: game.identity(for: game.me?.participantId)?.puuid)
+        }
+        olderMatches += page
+        myPerformance.merge(graded) { current, _ in current }
+    }
+
+    /// Matches of the signed-in player that op.gg saw end before `time`; empty when op.gg does not know the account.
+    private func opggGames(before time: Double, riotId: String) async -> [HistoryGame] {
+        guard let region = clientRegion else { return [] }
+        let key = "\(region.rawValue)|\(riotId)"
+        if opggPuuids[key] == nil { opggPuuids[key] = try? await OpggAccounts.search(riotId, region: region).first?.puuid }
+        guard let opggPuuid = opggPuuids[key] else { return [] }
+        let date = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: time / 1000))
+        return (try? await OpggAccounts.games(puuid: opggPuuid, region: region, endedBefore: date)) ?? []
     }
 
     private func refreshPhase() async {
@@ -115,6 +171,9 @@ final class AppModel {
     }
 
     // MARK: Events
+
+    private static let eventURIs = ["/lol-gameflow/v1/gameflow-phase", "/lol-matchmaking/v1/ready-check",
+                                    "/lol-champ-select/v1/session", "/lol-summoner/v1/current-summoner"]
 
     private func handle(_ event: LCUEvent) async {
         switch event.uri {
@@ -138,7 +197,6 @@ final class AppModel {
         guard newPhase != phase else { return }
         if isPreview { endPreview() }
         phase = newPhase
-        log(tr("Phase: %@", phaseTitle))
 
         switch newPhase {
         case "ChampSelect":
@@ -211,7 +269,6 @@ final class AppModel {
         if let action = session.myActiveAction, action.id != lastPickTurnActionId {
             lastPickTurnActionId = action.id
             if settings.soundAlerts { NSSound(named: "Ping")?.play() }
-            log(action.type == "ban" ? tr("Your turn to ban") : tr("Your turn to pick"))
         }
 
         if settings.scoutTeam, previous?.myTeam.map(\.puuid) != session.myTeam.map(\.puuid) || teamProfiles.isEmpty {
@@ -286,12 +343,17 @@ final class AppModel {
         puuid.flatMap { teamProfiles[$0] }
     }
 
-    /// Remembers a successfully looked-up Riot ID for search suggestions.
-    func rememberPlayer(_ riotId: String) {
-        recentPlayers.removeAll { $0.caseInsensitiveCompare(riotId) == .orderedSame }
-        recentPlayers.insert(riotId, at: 0)
-        recentPlayers = Array(recentPlayers.prefix(12))
-        UserDefaults.standard.set(recentPlayers, forKey: "recentPlayers")
+    /// Remembers a successfully looked-up player for search suggestions.
+    func rememberPlayer(_ query: PlayerQuery) {
+        var list = recentPlayers.filter { $0.region != query.region || $0.riotId.caseInsensitiveCompare(query.riotId) != .orderedSame }
+        list.insert(query, at: 0)
+        recentPlayerKeys = list.prefix(12).map(\.stored)
+        UserDefaults.standard.set(recentPlayerKeys, forKey: "recentPlayers")
+    }
+
+    /// Profile of a player on any server, from op.gg.
+    func remoteProfile(_ query: PlayerQuery) async -> PlayerProfile? {
+        await scout.remoteProfile(query)
     }
 
     func lookupPlayer(riotId: String) async -> PlayerProfile? {
@@ -312,14 +374,14 @@ final class AppModel {
 
     /// Opens the champ select window with a sample draft so it can be explored outside a game.
     func startPreview() {
-        guard let me else { return log(tr("Connect to the client first"), .warning) }
+        guard let me else { return notify(tr("Connect to the client first"), .warning) }
         isPreview = true
         advisor.reset()
         let enemies = [238, 64, 51, 57, 25]
         let allies = [(266, "TOP"), (0, "MIDDLE"), (0, "JUNGLE"), (0, "BOTTOM"), (0, "UTILITY")]
         let myTeam = allies.enumerated().map { index, pair in
             ChampSelectPlayer(cellId: index, championId: pair.0, championPickIntent: nil, assignedPosition: pair.1,
-                              puuid: index == 1 ? me.puuid : nil, gameName: index == 1 ? me.gameName : nil, tagLine: me.tagLine)
+                              puuid: index == 1 ? me.puuid : nil, gameName: index == 1 ? me.gameName : nil)
         }
         let theirTeam = enemies.enumerated().map { index, id in
             ChampSelectPlayer(cellId: 5 + index, championId: index < 3 ? id : 0, championPickIntent: nil, assignedPosition: nil)
@@ -330,7 +392,7 @@ final class AppModel {
             [ChampSelectAction(id: 3, actorCellId: 1, championId: 103, completed: false, isInProgress: true, type: "pick")],
         ]
         let session = ChampSelectSession(localPlayerCellId: 1, myTeam: myTeam, theirTeam: theirTeam, actions: actions,
-                                         timer: ChampSelectTimer(phase: "BAN_PICK", adjustedTimeLeftInPhase: 90_000,
+                                         timer: ChampSelectTimer(adjustedTimeLeftInPhase: 90_000,
                                                                  internalNowInEpochMs: Date().timeIntervalSince1970 * 1000))
         champSelect = session
         teamProfiles = [:]
@@ -383,7 +445,7 @@ final class AppModel {
                     }
                 } catch is DecodingError {
                     let message = tr("Game data could not be read, the HUD is paused")
-                    if lastError != message { log(message, .warning); lastError = message }
+                    if lastError != message { notify(message, .warning); lastError = message }
                 } catch {}
                 try? await Task.sleep(for: .seconds(1))
             }
@@ -400,7 +462,7 @@ final class AppModel {
 
     /// Runs a scripted sample game through the in-game HUD for about a minute.
     func startHUDPreview() {
-        guard liveTask == nil || isHUDPreview else { return log(tr("A game is running, the HUD is already live"), .info) }
+        guard liveTask == nil || isHUDPreview else { return notify(tr("A game is running, the HUD is already live"), .info) }
         liveTask?.cancel()
         isHUDPreview = true
         hudMode = .hud
@@ -424,19 +486,50 @@ final class AppModel {
 
     // MARK: Tools
 
-    /// Runs a client call and logs its outcome.
+    /// Runs a client call and reports its outcome.
     func perform(_ success: String, _ action: @escaping (LCUClient) async throws -> Void) async {
-        guard let client else { return log(tr("Client is not connected"), .warning) }
+        guard let client else { return notify(tr("Client is not connected"), .warning) }
         do {
             try await action(client)
-            log(success, .success)
+            notify(success, .success)
         } catch {
-            log(tr("%@ failed: %@", success, error.localizedDescription), .warning)
+            notify(tr("%@ failed: %@", success, error.localizedDescription), .warning)
         }
     }
 
-    func log(_ text: String, _ kind: LogEntry.Kind = .info) {
-        logs.insert(LogEntry(text: text, kind: kind), at: 0)
-        if logs.count > 200 { logs.removeLast() }
+    /// Shows a message in the main window for a few seconds.
+    func notify(_ text: String, _ kind: Notice.Kind = .info) {
+        notices.removeAll { $0.text == text }
+        let notice = Notice(text: text, kind: kind)
+        notices.append(notice)
+        if notices.count > 3 { notices.removeFirst(notices.count - 3) }
+        Task {
+            try? await Task.sleep(for: .seconds(kind == .warning ? 6 : 4))
+            notices.removeAll { $0.id == notice.id }
+        }
+    }
+
+    /// Full details of one match, cached after the first load.
+    func matchDetail(_ gameId: Int) async -> HistoryGame? {
+        guard let client else { return nil }
+        let game = await scout.game(gameId, client: client)
+        detailCache[gameId] = game
+        return game
+    }
+
+    /// Grades another player's recent games against everyone in each match.
+    func performances(for profile: PlayerProfile) async -> [Int: GamePerformance] {
+        guard let client else { return [:] }
+        let graded = await scout.performances(of: profile.recent, puuid: profile.puuid, client: client)
+        await cacheDetails(of: profile.recent)
+        return graded
+    }
+}
+
+private extension HistoryGame {
+    /// Whether two records from different sources describe the same match.
+    func isSame(as other: HistoryGame) -> Bool {
+        guard let start = gameCreation, let otherStart = other.gameCreation, me?.championId == other.me?.championId else { return false }
+        return abs(start - otherStart) < 180_000 && abs((gameDuration ?? 0) - (other.gameDuration ?? 0)) < 60
     }
 }

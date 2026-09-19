@@ -6,7 +6,6 @@ struct ChampionBuild: Sendable {
         var ids: [Int]
         var play: Int
         var win: Int
-        var pickRate: Double?
 
         var id: String { ids.map(String.init).joined(separator: "-") }
         var winRate: Double { play > 0 ? Double(win) / Double(play) : 0 }
@@ -44,7 +43,6 @@ struct ChampionBuild: Sendable {
     var laneShares: [(lane: Lane, share: Double)] = []
     var kda: Double?
     var rank: Int?
-    var previousRank: Int?
 }
 
 struct TierListEntry: Sendable, Identifiable, Hashable {
@@ -89,7 +87,12 @@ enum BuildService {
         var lane = lane
         if mode == .ranked, lane == nil { lane = await mainLane(championId) }
         let key = "\(championId)-\(lane?.rawValue ?? "-")-\(mode.rawValue)-\(tier.rawValue)"
-        if let cached = await BuildCache.shared.get(key) { return cached }
+        return try await BuildCache.shared.build(key) { [lane] in
+            try await fetchBuild(championId: championId, lane: lane, mode: mode, tier: tier)
+        }
+    }
+
+    private static func fetchBuild(championId: Int, lane: Lane?, mode: QueueMode, tier: EloTier) async throws -> ChampionBuild {
         let position = mode == .aram ? "none" : (lane?.opggName ?? "mid")
         let url = URL(string: "\(base)/\(mode.rawValue)/\(championId)/\(position)?tier=\(tier.rawValue)")!
         var request = URLRequest(url: url)
@@ -103,7 +106,6 @@ enum BuildService {
         if tier != .emeraldPlus {
             build.runes = build.runes.map { var r = $0; r.source = tier.title; return r }
         }
-        await BuildCache.shared.set(key, build)
         return build
     }
 
@@ -148,27 +150,37 @@ enum BuildError: LocalizedError {
     var errorDescription: String? { if case let .unavailable(message) = self { return message }; return nil }
 }
 
-/// Five-minute cache of op.gg champion builds.
+/// Five-minute cache of op.gg champion builds; parallel requests for the same build share one download.
 actor BuildCache {
     static let shared = BuildCache()
     private var store: [String: (date: Date, build: ChampionBuild)] = [:]
+    private var pending: [String: Task<ChampionBuild, Error>] = [:]
 
-    func get(_ key: String) -> ChampionBuild? {
-        guard let hit = store[key], Date().timeIntervalSince(hit.date) < 300 else { return nil }
-        return hit.build
+    func build(_ key: String, fetch: @escaping @Sendable () async throws -> ChampionBuild) async throws -> ChampionBuild {
+        if let hit = store[key], Date().timeIntervalSince(hit.date) < 300 { return hit.build }
+        if let task = pending[key] { return try await task.value }
+        let task = Task { try await fetch() }
+        pending[key] = task
+        defer { pending[key] = nil }
+        let build = try await task.value
+        store[key] = (Date(), build)
+        return build
     }
-
-    func set(_ key: String, _ build: ChampionBuild) { store[key] = (Date(), build) }
 }
 
-/// Keeps the op.gg tier list for ten minutes so lane lookups stay cheap.
+/// Keeps the op.gg tier list for ten minutes so lane lookups stay cheap; parallel callers share one download.
 actor TierListCache {
     static let shared = TierListCache()
     private var cached: (date: Date, entries: [TierListEntry])?
+    private var pending: Task<[TierListEntry], Error>?
 
     func entries() async throws -> [TierListEntry] {
         if let cached, Date().timeIntervalSince(cached.date) < 600 { return cached.entries }
-        let entries = try await BuildService.fetchTierList()
+        if let pending { return try await pending.value }
+        let task = Task { try await BuildService.fetchTierList() }
+        pending = task
+        defer { pending = nil }
+        let entries = try await task.value
         cached = (Date(), entries)
         return entries
     }
@@ -205,11 +217,10 @@ private struct OpggStat: Decodable {
     var ids: [Int]?
     var play: Int?
     var win: Int?
-    var pick_rate: Double?
 
     var model: ChampionBuild.Stat? {
         guard let ids, !ids.isEmpty else { return nil }
-        return .init(ids: ids, play: play ?? 0, win: win ?? 0, pickRate: pick_rate)
+        return .init(ids: ids, play: play ?? 0, win: win ?? 0)
     }
 }
 private struct OpggRune: Decodable {
@@ -222,10 +233,8 @@ private struct OpggRune: Decodable {
     var win: Int?
 }
 private struct OpggSkill: Decodable {
-    struct Build: Decodable { var order: [String]; var play: Int?; var win: Int?; var pick_rate: Double? }
+    struct Build: Decodable { var order: [String]; var play: Int?; var win: Int? }
     var ids: [String]
-    var play: Int?
-    var win: Int?
     var pick_rate: Double?
     var builds: [Build]?
 }
@@ -287,7 +296,6 @@ private struct OpggChampion: Decodable {
         }
         result.kda = stats?.kda
         result.rank = stats?.tier_data?.rank
-        result.previousRank = stats?.tier_data?.rank_prev_patch
         return result
     }
 }

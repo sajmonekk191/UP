@@ -248,7 +248,7 @@ private struct MiniHUDToggle: View {
             .overlay(Capsule().strokeBorder(model.hudClosed ? Theme.hairline : Theme.good.opacity(0.5)))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).handCursor()
         .help(model.hudClosed ? tr("Show the mini HUD") : tr("Hide the mini HUD"))
     }
 }

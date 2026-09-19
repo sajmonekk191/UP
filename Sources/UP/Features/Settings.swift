@@ -12,6 +12,24 @@ enum RuneSource: String, CaseIterable, Identifiable {
     }
 }
 
+/// Where and how the section navigation of the main window is drawn.
+enum NavigationStyle: String, CaseIterable, Identifiable {
+    case top, league, rail, dock, pill
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .top: tr("Top tabs")
+        case .league: tr("League-style tabs")
+        case .rail: tr("Side rail")
+        case .dock: tr("Floating dock")
+        case .pill: tr("Compact side pill")
+        }
+    }
+    var next: NavigationStyle { Self.allCases[(Self.allCases.firstIndex(of: self)! + 1) % Self.allCases.count] }
+    /// Styles whose section tabs live in the top bar, which moves the search bar to the right.
+    var tabsInHeader: Bool { self == .top || self == .league }
+}
+
 /// User preferences persisted in UserDefaults.
 @MainActor
 @Observable
@@ -35,6 +53,8 @@ final class AppSettings {
     var hudToasts: Bool { didSet { save(hudToasts, "hudToasts") } }
     var hudCompact: Bool { didSet { save(hudCompact, "hudCompact") } }
     var hudScale: Double { didSet { save(hudScale, "hudScale") } }
+    var navigationStyle: NavigationStyle { didSet { save(navigationStyle.rawValue, "navigationStyle") } }
+    var searchRegion: Region? { didSet { save(searchRegion?.rawValue ?? "", "searchRegion") } }
 
     init() {
         defaults.register(defaults: [
@@ -42,6 +62,7 @@ final class AppSettings {
             "importOnHover": false, "allowOverwritePage": true, "autoSpells": true, "flashOnF": true,
             "autoItemSets": true, "scoutTeam": true, "soundAlerts": true, "autoPlayAgain": false,
             "showOverlay": true, "autoOpenChampSelect": true, "hudToasts": true, "hudCompact": false, "hudScale": 1.0,
+            "navigationStyle": NavigationStyle.top.rawValue, "searchRegion": "",
         ])
         autoAccept = defaults.bool(forKey: "autoAccept")
         acceptDelay = defaults.double(forKey: "acceptDelay")
@@ -60,6 +81,8 @@ final class AppSettings {
         hudToasts = defaults.bool(forKey: "hudToasts")
         hudCompact = defaults.bool(forKey: "hudCompact")
         hudScale = defaults.double(forKey: "hudScale")
+        navigationStyle = NavigationStyle(rawValue: defaults.string(forKey: "navigationStyle") ?? "") ?? .top
+        searchRegion = Region(rawValue: defaults.string(forKey: "searchRegion") ?? "")
     }
 
     private func save(_ value: Any, _ key: String) { defaults.set(value, forKey: key) }

@@ -45,7 +45,7 @@ struct GamePerformance: Sendable, Hashable {
         }
 
         if everyone.count > 1 {
-            let scores = everyone.map { (id: $0.participantId, score: (lobby.score($0) * 10).rounded() / 10) }.sorted { $0.score > $1.score }
+            let scores = Self.rankedScores(lobby)
             let mine = scores.first { $0.id == me.participantId }?.score ?? 0
             score = mine
             rank = (scores.firstIndex { $0.id == me.participantId } ?? 0) + 1
@@ -73,6 +73,25 @@ struct GamePerformance: Sendable, Hashable {
         if players >= 6, lobby.leads(me, in: .tanking) { badges.append(.frontline) }
         if players >= 6, (s.visionScore ?? 0) >= 10, lobby.leads(me, in: .vision) { badges.append(.topVision) }
         if players >= 6, !lobby.isARAM, !lobby.isArena, lobby.leads(me, in: .cs) { badges.append(.mostCS) }
+    }
+}
+
+extension GamePerformance {
+    /// Grades of a profile whose games already include every player, keyed by game id.
+    static func all(in profile: PlayerProfile) -> [Int: GamePerformance] {
+        Dictionary(profile.recent.compactMap { game in GamePerformance(game: game, puuid: profile.puuid).map { (game.gameId, $0) } },
+                   uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Score of every participant of a full match, keyed by participant id.
+    static func scores(in game: HistoryGame) -> [Int: Double] {
+        guard (game.participants?.count ?? 0) > 1 else { return [:] }
+        return Dictionary(rankedScores(Lobby(game: game)).compactMap { entry in entry.id.map { ($0, entry.score) } },
+                          uniquingKeysWith: { a, _ in a })
+    }
+
+    fileprivate static func rankedScores(_ lobby: Lobby) -> [(id: Int?, score: Double)] {
+        lobby.players.map { (id: $0.participantId, score: (lobby.score($0) * 10).rounded() / 10) }.sorted { $0.score > $1.score }
     }
 }
 

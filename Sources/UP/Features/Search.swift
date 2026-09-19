@@ -76,7 +76,8 @@ enum SearchTag: String, CaseIterable, Identifiable {
 struct SearchSuggestion: Identifiable, Hashable {
     enum Kind: Hashable {
         case champion(Int)
-        case player(String)
+        case player(PlayerQuery)
+        case account(PlayerQuery)
         case tag(SearchTag)
     }
 
@@ -86,11 +87,16 @@ struct SearchSuggestion: Identifiable, Hashable {
     var symbol: String
     var championId: Int?
     var iconId: Int?
+    var imageURL: String?
+    var tier: String?
+    var rank: String?
+    var pro: String?
 
     var id: String {
         switch kind {
         case let .champion(id): "c\(id)"
-        case let .player(riotId): "p\(riotId.lowercased())"
+        case let .player(query): "p\(query.stored.lowercased())"
+        case let .account(query): "a\(query.stored.lowercased())"
         case let .tag(tag): "t\(tag.rawValue)"
         }
     }
@@ -99,20 +105,51 @@ struct SearchSuggestion: Identifiable, Hashable {
         switch kind {
         case .champion: tr("Champions")
         case .player: tr("Players")
+        case let .account(query): tr("Accounts on %@", query.region.code)
         case .tag: tr("Tags")
         }
+    }
+
+    /// Account suggestion for a player op.gg found on the server.
+    init(account hit: AccountHit, region: Region) {
+        self.init(kind: .account(PlayerQuery(riotId: hit.riotId, region: region)), title: hit.riotId,
+                  subtitle: hit.level.map { tr("Level %d", $0) } ?? "", symbol: "person.crop.circle",
+                  imageURL: hit.iconURL, tier: hit.tier, rank: hit.rank ?? tr("Unranked"), pro: hit.pro)
+    }
+
+    init(kind: Kind, title: String, subtitle: String, symbol: String, championId: Int? = nil, iconId: Int? = nil,
+         imageURL: String? = nil, tier: String? = nil, rank: String? = nil, pro: String? = nil) {
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.symbol = symbol
+        self.championId = championId
+        self.iconId = iconId
+        self.imageURL = imageURL
+        self.tier = tier
+        self.rank = rank
+        self.pro = pro
     }
 }
 
 enum SearchEngine {
-    /// Ranked suggestions for the query: tags when it starts with "#", otherwise champions, players and tags.
+    /// Champion and known-player suggestions (shown above server accounts) and tag suggestions (shown below them).
     @MainActor
-    static func suggestions(for raw: String, model: AppModel) -> [SearchSuggestion] {
+    static func suggestions(for raw: String, model: AppModel) -> (leading: [SearchSuggestion], tags: [SearchSuggestion]) {
         let query = raw.trimmingCharacters(in: .whitespaces)
         let lowered = query.lowercased()
-        if query.isEmpty { return recent(model) + tags(matching: "").prefix(6) }
-        if lowered.hasPrefix("#") { return Array(tags(matching: String(lowered.dropFirst())).prefix(10)) }
-        return Array(champions(lowered, model).prefix(6)) + Array(players(query, model).prefix(5)) + Array(tags(matching: lowered).prefix(3))
+        if query.isEmpty { return (recent(model), Array(tags(matching: "").prefix(6))) }
+        if lowered.hasPrefix("#") { return ([], Array(tags(matching: String(lowered.dropFirst())).prefix(10))) }
+        return (Array(champions(lowered, model).prefix(5)) + Array(players(query, model).prefix(5)), Array(tags(matching: lowered).prefix(3)))
+    }
+
+    /// Name to look up on the server for a query, or nil when it is too short or only a tag.
+    static func accountName(_ raw: String) -> String? {
+        let query = raw.trimmingCharacters(in: .whitespaces)
+        guard !query.hasPrefix("#") else { return nil }
+        let parts = query.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        if parts.count == 2 { return parts[1].count >= 2 ? query : nil }
+        return query.count >= 2 ? query : nil
     }
 
     private static func looksLikeRiotId(_ query: String) -> Bool {
@@ -149,24 +186,26 @@ enum SearchEngine {
     @MainActor
     private static func players(_ query: String, _ model: AppModel) -> [SearchSuggestion] {
         let lowered = query.lowercased()
-        var known: [(riotId: String, subtitle: String, icon: Int?)] = []
-        if let me = model.me { known.append((me.riotId, tr("You"), me.profileIconId)) }
-        known += model.friends.compactMap { f in f.riotId.map { ($0, tr("Friend"), f.icon) } }
-        known += model.recentPlayers.map { ($0, tr("Recent search"), nil) }
+        let home = model.clientRegion ?? model.searchRegion
+        var known: [(query: PlayerQuery, subtitle: String, icon: Int?)] = []
+        if let me = model.myQuery { known.append((me, tr("You"), model.me?.profileIconId)) }
+        known += model.friends.compactMap { f in f.riotId.map { (PlayerQuery(riotId: $0, region: home), tr("Friend"), f.icon) } }
+        known += model.recentPlayers.map { ($0, $0.region == home ? tr("Recent search") : tr("Recent search · %@", $0.region.code), nil) }
         known += model.teamProfiles.values.compactMap { p in
-            p.summoner.map { ($0.riotId, tr("Recent teammate"), $0.profileIconId) }
+            p.summoner.map { (PlayerQuery(riotId: $0.riotId, region: home), tr("Recent teammate"), $0.profileIconId) }
         }
         var seen = Set<String>()
         var result: [SearchSuggestion] = []
         if looksLikeRiotId(query) {
-            seen.insert(lowered)
-            result.append(SearchSuggestion(kind: .player(query), title: query, subtitle: tr("Look up this Riot ID"), symbol: "magnifyingglass"))
+            let lookup = PlayerQuery(riotId: query, region: model.searchRegion)
+            seen.insert(lookup.stored.lowercased())
+            result.append(SearchSuggestion(kind: .player(lookup), title: query, subtitle: tr("Look up this Riot ID on %@", lookup.region.code), symbol: "magnifyingglass"))
         }
-        let ranked = known.compactMap { entry -> (Int, (riotId: String, subtitle: String, icon: Int?))? in
-            score(entry.riotId, lowered).map { ($0, entry) }
+        let ranked = known.compactMap { entry -> (Int, (query: PlayerQuery, subtitle: String, icon: Int?))? in
+            score(entry.query.riotId, lowered).map { ($0, entry) }
         }.sorted { $0.0 < $1.0 }
-        for (_, entry) in ranked where seen.insert(entry.riotId.lowercased()).inserted {
-            result.append(SearchSuggestion(kind: .player(entry.riotId), title: entry.riotId, subtitle: entry.subtitle,
+        for (_, entry) in ranked where seen.insert(entry.query.stored.lowercased()).inserted {
+            result.append(SearchSuggestion(kind: .player(entry.query), title: entry.query.riotId, subtitle: entry.subtitle,
                                            symbol: "person.crop.circle", iconId: entry.icon))
         }
         return result
@@ -185,8 +224,10 @@ enum SearchEngine {
 
     @MainActor
     private static func recent(_ model: AppModel) -> [SearchSuggestion] {
-        model.recentPlayers.prefix(4).map {
-            SearchSuggestion(kind: .player($0), title: $0, subtitle: tr("Recent search"), symbol: "clock.arrow.circlepath")
+        let home = model.clientRegion ?? model.searchRegion
+        return model.recentPlayers.prefix(4).map {
+            SearchSuggestion(kind: .player($0), title: $0.riotId,
+                             subtitle: $0.region == home ? tr("Recent search") : tr("Recent search · %@", $0.region.code), symbol: "clock.arrow.circlepath")
         }
     }
 }

@@ -8,11 +8,10 @@ enum HUDPreview {
         let time = start + elapsed
         func player(_ champ: String, _ name: String, _ team: String, _ pos: String, level: Int, k: Int, d: Int, a: Int, cs: Int,
                     items: [Int], dead: Bool = false, respawn: Double = 0) -> LivePlayer {
-            LivePlayer(championName: champ, riotId: "\(name)#EUW", riotIdGameName: name, riotIdTagLine: "EUW", summonerName: name,
+            LivePlayer(championName: champ, riotId: "\(name)#EUW", riotIdGameName: name, summonerName: name,
                        team: team, level: level, isDead: dead, respawnTimer: respawn, position: pos,
-                       scores: .init(kills: k, deaths: d, assists: a, creepScore: cs, wardScore: 12),
-                       items: items.enumerated().map { .init(itemID: $0.element, count: 1, slot: $0.offset, displayName: nil) },
-                       summonerSpells: nil, runes: nil)
+                       scores: .init(kills: k, deaths: d, assists: a, creepScore: cs),
+                       items: items.enumerated().map { .init(itemID: $0.element, count: 1, slot: $0.offset) })
         }
         let zedLevel = elapsed >= 4 ? 11 : 10
         let viDead = elapsed >= 7 && elapsed < 39
@@ -31,27 +30,17 @@ enum HUDPreview {
             player("Jinx", "Rockets", "CHAOS", "BOTTOM", level: 9, k: 1, d: 3, a: 3, cs: 126, items: [3006, 6672, 1055, 1042, 2003]),
             player("Thresh", "Lantern", "CHAOS", "UTILITY", level: 8, k: 0, d: 2, a: 6, cs: 18, items: [3111, 3190]),
         ]
-        var events = [
-            LiveEvent(EventID: 0, EventName: "GameStart", EventTime: 0),
-            LiveEvent(EventID: 1, EventName: "FirstBlood", EventTime: 190, KillerName: "Shadow"),
-            LiveEvent(EventID: 2, EventName: "ChampionKill", EventTime: 190, KillerName: "Shadow", VictimName: "You"),
+        let events = [
             LiveEvent(EventID: 3, EventName: "DragonKill", EventTime: 420, KillerName: "Kick", DragonType: "Fire", Stolen: "False"),
-            LiveEvent(EventID: 4, EventName: "TurretKilled", EventTime: 640, KillerName: "Axe", TurretKilled: "Turret_T1_L_03_A"),
             LiveEvent(EventID: 5, EventName: "DragonKill", EventTime: 625, KillerName: "Kick", DragonType: "Water", Stolen: "False"),
             LiveEvent(EventID: 7, EventName: "InhibKilled", EventTime: start - 40, KillerName: "Kick", InhibKilled: "Barracks_T2_C1"),
             LiveEvent(EventID: 8, EventName: "InhibKilled", EventTime: start - 100, KillerName: "Axe", InhibKilled: "Barracks_T1_L1"),
         ]
-        if elapsed >= 7 {
-            events.append(LiveEvent(EventID: 6, EventName: "ChampionKill", EventTime: start + 7, KillerName: "Kick", VictimName: "Punch", Assisters: ["You"]))
-        }
         return LiveGameData(
-            activePlayer: LiveActivePlayer(riotId: "You#EUW", summonerName: "You", level: 11, currentGold: gold,
-                                           championStats: .init(attackDamage: 64, abilityPower: 212, armor: 58, magicResist: 44,
-                                                                attackSpeed: 0.78, moveSpeed: 385, critChance: 0, abilityHaste: 25,
-                                                                currentHealth: 1240, maxHealth: 1610)),
+            activePlayer: LiveActivePlayer(riotId: "You#EUW", summonerName: "You", currentGold: gold),
             allPlayers: players,
             events: LiveEvents(Events: events),
-            gameData: LiveGameStats(gameMode: "CLASSIC", gameTime: time, mapNumber: 11))
+            gameData: LiveGameStats(gameTime: time))
     }
 
     /// Sample scouted profiles for the preview's match overview, keyed by live champion name.
@@ -80,7 +69,7 @@ enum HUDPreview {
             var profile = PlayerProfile(
                 puuid: "preview-\(index)",
                 summoner: Summoner(puuid: "preview-\(index)", gameName: name, tagLine: "EUW", summonerLevel: 120 + index * 37),
-                solo: RankedQueue(queueType: "RANKED_SOLO_5x5", tier: tier, division: division, leaguePoints: lp, wins: wins, losses: losses),
+                solo: RankedQueue(tier: tier, division: division, leaguePoints: lp, wins: wins, losses: losses),
                 flex: nil, recent: recent,
                 champions: champGames > 0 ? [.init(championId: champId, games: champGames, wins: champGames * 3 / 5, kills: 40, deaths: 25, assists: 50)] : [])
             profile.masteries = [ChampionMastery(championId: champId, championLevel: points > 100_000 ? 10 : points > 20_000 ? 6 : 3, championPoints: points)]
