@@ -300,6 +300,7 @@ struct ItemInfo: Decodable, Sendable {
     var id: Int
     var name: String
     var description: String?
+    var categories: [String]?
     var priceTotal: Int?
     var iconPath: String?
     var from: [Int]?

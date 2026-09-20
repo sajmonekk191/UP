@@ -48,12 +48,14 @@ struct MatchInsights {
             : myDetail?.tacticalInfo?.damageType == "kMagic" ? .magic : .physical
 
         if let build = hud.myBuild {
+            let starters = (build.starterItems.first?.ids ?? []).filter { !(data.items[$0]?.categories ?? []).contains("Consumable") }
             var ordered: [Int] = []
-            for id in (build.boots.first?.ids ?? []) + (build.coreItems.first?.ids ?? []) + build.lastItems.prefix(3).flatMap(\.ids)
+            for id in starters + (build.boots.first?.ids ?? []) + (build.coreItems.first?.ids ?? []) + build.lastItems.prefix(3).flatMap(\.ids)
             where !ordered.contains(id) { ordered.append(id) }
             var nextAssigned = false
             steps = ordered.map { id in
                 if owned.contains(id) { return BuildStep(itemId: id, state: .owned) }
+                if starters.contains(id), !owned.isEmpty { return BuildStep(itemId: id, state: .later) }
                 defer { nextAssigned = true }
                 return BuildStep(itemId: id, state: nextAssigned ? .later : .next)
             }

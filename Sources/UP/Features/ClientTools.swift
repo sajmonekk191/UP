@@ -240,11 +240,23 @@ enum ClientTools {
         return added
     }
 
-    /// Leaves champion select without closing the client; the usual dodge penalty still applies.
+    /// Leaves champion select without closing the client, trying every way the client offers; the usual dodge penalty still applies.
     static func dodge(client: LCUClient) async throws {
         let args = #"["","teambuilder-draft","quitV2",""]"#
         let query = args.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? args
-        try await client.post("/lol-login/v1/session/invoke?destination=lcdsServiceProxy&method=call&args=\(query)", ["data": ["", "teambuilder-draft", "quitV2", ""]])
+        let attempts: [(String, Any?)] = [
+            ("/lol-lobby-team-builder/champ-select/v1/session/quit", nil),
+            ("/lol-login/v1/session/invoke?destination=lcdsServiceProxy&method=call&args=\(query)", ["data": ["", "teambuilder-draft", "quitV2", ""]]),
+        ]
+        var failure: Error?
+        for (path, body) in attempts {
+            do {
+                return try await client.post(path, body)
+            } catch {
+                failure = error
+            }
+        }
+        throw failure ?? ToolError.noChampion
     }
 
     /// Rerolls the ARAM champion, then takes the previous one back from the bench so the new roll is left to the team.
