@@ -228,11 +228,14 @@ final class InGameHUDController {
 /// Whatever the overlay currently shows: the compact HUD with its alerts, or the match overview.
 struct InGameStage: View {
     @Environment(AppModel.self) private var model
+    @State private var tooltip = TooltipState()
 
     var body: some View {
         Group {
             if model.hudMode == .scoreboard {
                 InGameScoreboard()
+                    .overlay { TooltipLayer() }
+                    .environment(tooltip)
             } else if !model.hudClosed {
                 ScaledContent(scale: model.settings.hudScale) {
                     VStack(alignment: .trailing, spacing: 8) {

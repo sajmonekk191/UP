@@ -102,9 +102,11 @@ final class AppModel {
         Task { friends = (try? await client.get("/lol-chat/v1/friends")) ?? [] }
 
         let socket = LCUWebSocket(credentials: credentials)
+        let poll = Task { await pollPhase() }
         do {
             for try await event in socket.events(for: Self.eventURIs) { await handle(event) }
         } catch {}
+        poll.cancel()
         stopLiveTracking()
     }
 
@@ -162,18 +164,40 @@ final class AppModel {
         return (try? await OpggAccounts.games(puuid: opggPuuid, region: region, endedBefore: date)) ?? []
     }
 
+    /// Safety net for a quiet event socket: asks the client for the phase every few seconds.
+    private func pollPhase() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(5))
+            guard let client else { return }
+            guard let current: String = try? await client.get("/lol-gameflow/v1/gameflow-phase") else { continue }
+            if current != phase { await setPhase(current) }
+            guard current == "ChampSelect", champSelect == nil else { continue }
+            for uri in Self.champSelectURIs {
+                if let session: ChampSelectSession = try? await client.get(uri), !session.myTeam.isEmpty {
+                    await handleChampSelect(session)
+                    break
+                }
+            }
+        }
+    }
+
     private func refreshPhase() async {
         guard let client else { return }
         if let phase: String = try? await client.get("/lol-gameflow/v1/gameflow-phase") { await setPhase(phase) }
-        if let session: ChampSelectSession = try? await client.get("/lol-champ-select/v1/session") {
-            await handleChampSelect(session)
+        for uri in Self.champSelectURIs {
+            if let session: ChampSelectSession = try? await client.get(uri), !session.myTeam.isEmpty {
+                await handleChampSelect(session)
+                return
+            }
         }
     }
 
     // MARK: Events
 
+    /// Custom games and games against bots run the older champ select, so both sessions are watched.
+    private static let champSelectURIs = ["/lol-champ-select/v1/session", "/lol-champ-select-legacy/v1/session"]
     private static let eventURIs = ["/lol-gameflow/v1/gameflow-phase", "/lol-matchmaking/v1/ready-check",
-                                    "/lol-champ-select/v1/session", "/lol-summoner/v1/current-summoner"]
+                                    "/lol-summoner/v1/current-summoner"] + champSelectURIs
 
     private func handle(_ event: LCUEvent) async {
         switch event.uri {
@@ -181,8 +205,8 @@ final class AppModel {
             if let phase = event.decode(String.self) { await setPhase(phase) }
         case "/lol-matchmaking/v1/ready-check":
             if let check = event.decode(ReadyCheck.self) { handleReadyCheck(check) }
-        case "/lol-champ-select/v1/session":
-            guard !isPreview else { return }
+        case let uri where Self.champSelectURIs.contains(uri):
+            if isPreview { endPreview() }
             if event.eventType == "Delete" { champSelect = nil } else if let session = event.decode(ChampSelectSession.self) {
                 await handleChampSelect(session)
             }
@@ -428,6 +452,7 @@ final class AppModel {
     // MARK: Live game
 
     private func startLiveTracking() {
+        if isHUDPreview { stopLiveTracking() }
         guard liveTask == nil else { return }
         hud.reset()
         hudClosed = false

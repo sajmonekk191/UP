@@ -34,8 +34,9 @@ final class ChampSelectWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         let window = self.window ?? makeWindow()
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     private func makeWindow() -> NSWindow {
@@ -50,6 +51,7 @@ final class ChampSelectWindowController: NSObject, NSWindowDelegate {
         window.minSize = NSSize(width: 1240, height: 760)
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("UPChampSelect")
+        window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
         window.contentView = NSHostingView(rootView: ChampSelectWindowView().environment(model))
         window.center()
         window.delegate = self
