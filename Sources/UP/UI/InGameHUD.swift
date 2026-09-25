@@ -16,6 +16,7 @@ final class InGameHUDController {
     private var previewWindow: NSWindow?
     private var fittedMode: HUDMode = .hud
     private var movingProgrammatically = false
+    private var screen: NSRect?
 
     /// Top-left corner per mode; only changed by the user dragging the panel, kept across launches.
     private func anchor(for mode: HUDMode) -> NSPoint? {
@@ -76,10 +77,17 @@ final class InGameHUDController {
         syncPreviewWindow()
         let visibleMode = model.hudMode == .scoreboard || !model.hudClosed
         let wanted = model.settings.showOverlay && model.live != nil && !model.isHUDPreview && visibleMode && gameIsFrontmost
-        guard wanted else { panel?.orderOut(nil); return }
+        guard wanted else {
+            if panel?.isVisible == true { panel?.orderOut(nil) }
+            return
+        }
         let panel = self.panel ?? makePanel()
+        let appearing = !panel.isVisible
+        if appearing || fittedMode != model.hudMode || screen == nil {
+            screen = (Self.gameScreen() ?? panel.screen ?? NSScreen.main)?.visibleFrame
+        }
         fitToContent(panel)
-        panel.orderFrontRegardless()
+        if appearing { panel.orderFrontRegardless() }
     }
 
     /// Sizes the panel to its content and places it at the saved anchor of the current mode (first time: HUD top right, overview top centre).
@@ -88,7 +96,7 @@ final class InGameHUDController {
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         guard size.width > 0, size.height > 0 else { return }
-        let screen = (Self.gameScreen() ?? panel.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        let screen = self.screen ?? .zero
         let modeChanged = fittedMode != model.hudMode
         let mode = model.hudMode
         let fallback = mode == .scoreboard
@@ -148,11 +156,20 @@ final class InGameHUDController {
                 self.setAnchor(NSPoint(x: panel.frame.minX, y: panel.frame.maxY), for: self.model.hudMode)
             }
         }
-        let hosting = NSHostingView(rootView: AnyView(InGameStage().environment(model)))
+        let stage = InGameStage().environment(model).environment(\.openPlayer) { [weak self] query in self?.openProfile(query) }
+        let hosting = NSHostingView(rootView: AnyView(stage))
+        hosting.sizingOptions = [.intrinsicContentSize]
         panel.contentView = hosting
         self.hosting = hosting
         self.panel = panel
         return panel
+    }
+
+    /// Opens a player's profile in the main window, which comes to the front over the game.
+    private func openProfile(_ query: PlayerQuery) {
+        model.profileRequest = query
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.identifier?.rawValue == "main" }?.makeKeyAndOrderFront(nil)
     }
 
     /// The preview runs in a normal window so it never floats over other apps.
@@ -165,7 +182,10 @@ final class InGameHUDController {
                 window.titlebarAppearsTransparent = true
                 window.appearance = NSAppearance(named: .darkAqua)
                 window.isReleasedWhenClosed = false
-                window.contentView = NSHostingView(rootView: HUDPreviewScene().environment(model))
+                let hosting = NSHostingView(rootView: HUDPreviewScene().environment(model))
+                hosting.sizingOptions = []
+                window.contentView = hosting
+                window.contentMinSize = NSSize(width: 1100, height: 720)
                 window.center()
                 previewWindow = window
                 NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
@@ -174,8 +194,8 @@ final class InGameHUDController {
                         self?.previewWindow = nil
                     }
                 }
+                window.makeKeyAndOrderFront(nil)
             }
-            previewWindow?.makeKeyAndOrderFront(nil)
         } else if let window = previewWindow {
             previewWindow = nil
             window.close()
@@ -353,8 +373,9 @@ struct InGameHUDView: View {
                 ObjectiveStrip(live: live)
                 if !model.settings.hudCompact {
                     Rectangle().fill(Theme.hairline).frame(height: 1)
-                    EnemyWatch()
+                    if model.queueMode == .arena { ArenaAugments() } else { EnemyWatch() }
                     MyGoal()
+                    BuildPlan()
                 }
             }
             .padding(10)
@@ -452,6 +473,35 @@ private struct EnemyWatch: View {
     }
 }
 
+/// Your champion's strongest Arena augments per rarity, from op.gg.
+private struct ArenaAugments: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let augments = model.hud.myBuild?.augments, !augments.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(tr("Best augments")).font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
+                ForEach([(8, tr("Prismatic"), Theme.accentBright), (4, tr("Gold"), Theme.gold), (1, tr("Silver"), Theme.textSecondary)], id: \.0) { rarity, name, tint in
+                    let best = augments.filter { $0.rarity == rarity }.prefix(8).sorted { $0.winRate > $1.winRate }.prefix(4)
+                    HStack(spacing: 5) {
+                        Text(name).font(.system(size: 9, weight: .bold)).foregroundStyle(tint).frame(width: 54, alignment: .leading)
+                        ForEach(Array(best)) { augment in
+                            let info = model.gameData.augments[augment.id]
+                            VStack(spacing: 1) {
+                                LCUImage(path: info?.augmentSmallIconPath, size: 24, corner: 6)
+                                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(tint.opacity(0.7)))
+                                Text(percent(augment.winRate, digits: 0)).font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(winRateColor(augment.winRate))
+                            }
+                            .help("\(info?.nameTRA ?? "#\(augment.id)") · \(percent(augment.winRate))")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Next core item with the gold still missing, plus CS per minute.
 private struct MyGoal: View {
     @Environment(AppModel.self) private var model
@@ -471,6 +521,42 @@ private struct MyGoal: View {
             Spacer(minLength: 6)
             Text(tr("%@ CS/m", decimal(model.hud.csPerMinute))).font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(model.hud.csPerMinute >= 7 ? Theme.good : model.hud.csPerMinute >= 5.5 ? Theme.textSecondary : Theme.warning)
+        }
+    }
+}
+
+/// Your build in buying order, owned items dimmed and the next one ringed in gold, and the skill max with the next point to spend.
+private struct BuildPlan: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let build = model.hud.myBuild, let live = model.live, let me = live.me {
+            let steps = MatchInsights.steps(of: build, owned: Set(me.items.map(\.itemID)), data: model.gameData)
+            VStack(alignment: .leading, spacing: 6) {
+                if !steps.isEmpty {
+                    HStack(spacing: 2) {
+                        ForEach(steps) { step in
+                            ItemIcon(id: step.itemId, size: 18)
+                                .opacity(step.state == .owned ? 0.35 : 1)
+                                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(step.state == .next ? Theme.gold : .clear, lineWidth: 1.5))
+                        }
+                    }
+                }
+                if let skill = build.skillOrder, !skill.priority.isEmpty {
+                    HStack(spacing: 3) {
+                        Text(tr("Skill max")).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        ForEach(Array(skill.priority.enumerated()), id: \.offset) { index, key in
+                            if index > 0 { Image(systemName: "chevron.right").font(.system(size: 6, weight: .bold)).foregroundStyle(Theme.textMuted) }
+                            Text(key).font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.text)
+                                .frame(width: 16, height: 16).background(Theme.accentDeep, in: RoundedRectangle(cornerRadius: 4))
+                        }
+                        Spacer(minLength: 4)
+                        if let next = skill.nextPoint(level: me.level, spent: live.abilityLevels) {
+                            Text(tr("Next point: %@", next)).font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.gold)
+                        }
+                    }
+                }
+            }
         }
     }
 }

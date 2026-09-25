@@ -31,6 +31,18 @@ struct ChampionBuild: Sendable {
             }
             return order
         }
+
+        /// Ability to put the next point in, or nil when none is unspent: the recommended order while the game allows it, else the max priority.
+        func nextPoint(level: Int, spent levels: [String: Int]) -> String? {
+            let spent = ["Q", "W", "E", "R"].reduce(0) { $0 + (levels[$1] ?? 0) }
+            guard spent < level else { return nil }
+            func allowed(_ key: String) -> Bool {
+                let points = levels[key] ?? 0
+                return key == "R" ? points < [6, 11, 16].filter { $0 <= level }.count : points < min(5, (level + 1) / 2)
+            }
+            if order.indices.contains(spent), allowed(order[spent]) { return order[spent] }
+            return (["R"] + priority.filter { $0 != "R" }).first(where: allowed)
+        }
     }
     struct Matchup: Sendable, Hashable, Identifiable {
         var championId: Int
@@ -71,11 +83,12 @@ struct ChampionBuild: Sendable {
     var duoPartners: [Matchup] = []
     var firstPlaceRate: Double?
     var averagePlace: Double?
+    var patch: String?
 }
 
 struct TierListEntry: Sendable, Identifiable, Hashable {
     var championId: Int
-    var lane: Lane
+    var lane: Lane?
     var tier: Int
     var rank: Int
     var winRate: Double
@@ -83,23 +96,41 @@ struct TierListEntry: Sendable, Identifiable, Hashable {
     var banRate: Double
     var play: Int
     var previousRank: Int?
-    var id: String { "\(championId)-\(lane.rawValue)" }
+    var id: String { "\(championId)-\(lane?.rawValue ?? "-")" }
     var rankChange: Int { previousRank.map { $0 - rank } ?? 0 }
 }
 
+/// One op.gg tier list with the patch its statistics come from.
+struct TierList: Sendable {
+    var entries: [TierListEntry]
+    var patch: String?
+}
+
+/// Which op.gg tier list to load: mode, Solo/Duo or Flex, server and rank bracket.
+struct TierListQuery: Hashable, Sendable {
+    var mode: QueueMode = .ranked
+    var flex = false
+    var region: Region?
+    var rank: EloTier = .emeraldPlus
+
+    /// The same query without the options op.gg ignores for its mode.
+    var normalized: TierListQuery { TierListQuery(mode: mode, flex: mode == .ranked && flex, region: region, rank: mode == .arena ? .emeraldPlus : rank) }
+}
+
 enum QueueMode: String, CaseIterable, Identifiable, Sendable {
-    case ranked, aram, arena
+    case ranked, aram, arena, urf
     var id: String { rawValue }
     var title: String {
         switch self {
         case .ranked: "Summoner's Rift"
         case .aram: "ARAM"
         case .arena: tr("Arena")
+        case .urf: "URF"
         }
     }
     var mapId: Int {
         switch self {
-        case .ranked: 11
+        case .ranked, .urf: 11
         case .aram: 12
         case .arena: 30
         }
@@ -107,21 +138,32 @@ enum QueueMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum EloTier: String, CaseIterable, Identifiable, Sendable {
-    case emeraldPlus = "emerald_plus", masterPlus = "master_plus", challenger
+    case all, goldPlus = "gold_plus", platinumPlus = "platinum_plus", emeraldPlus = "emerald_plus", diamondPlus = "diamond_plus", masterPlus = "master_plus"
+    case iron, bronze, silver, gold, platinum, emerald, diamond, master, grandmaster, challenger
+
+    /// Brackets whose builds champ select compares.
+    static let buildBrackets: [EloTier] = [.emeraldPlus, .masterPlus, .challenger]
+    static let brackets: [EloTier] = [.all, .goldPlus, .platinumPlus, .emeraldPlus, .diamondPlus, .masterPlus]
+    static let singleTiers: [EloTier] = [.iron, .bronze, .silver, .gold, .platinum, .emerald, .diamond, .master, .grandmaster, .challenger]
 
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .all: tr("All ranks")
+        case .goldPlus: "Gold+"
+        case .platinumPlus: "Platinum+"
         case .emeraldPlus: "Emerald+"
+        case .diamondPlus: "Diamond+"
         case .masterPlus: "Master+"
-        case .challenger: "Challenger"
+        default: rawValue.capitalized
         }
     }
 }
 
 /// Fetches build stats from op.gg's public champion API and Riot's in-client recommendations.
 enum BuildService {
-    private static let base = "https://lol-api-champion.op.gg/api/global/champions"
+    private static let api = "https://lol-api-champion.op.gg/api"
+    private static let base = "\(api)/global/champions"
 
     static func opggBuild(championId: Int, lane: Lane?, mode: QueueMode, tier: EloTier = .emeraldPlus) async throws -> ChampionBuild {
         var lane = lane
@@ -135,7 +177,7 @@ enum BuildService {
     private static func fetchBuild(championId: Int, lane: Lane?, mode: QueueMode, tier: EloTier) async throws -> ChampionBuild {
         let path = switch mode {
         case .ranked: "\(championId)/\(lane?.opggName ?? "mid")?tier=\(tier.rawValue)"
-        case .aram: "\(championId)/none?tier=\(tier.rawValue)"
+        case .aram, .urf: "\(championId)/none?tier=\(tier.rawValue)"
         case .arena: "\(championId)"
         }
         let url = URL(string: "\(base)/\(mode.rawValue)/\(path)")!
@@ -145,7 +187,10 @@ enum BuildService {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw BuildError.unavailable(tr("op.gg returned no data (HTTP %d)", (response as? HTTPURLResponse)?.statusCode ?? 0))
         }
-        var build = try jsonDecoder.decode(OpggRoot.self, from: data).data.build(championId: championId, requestedLane: lane)
+        let root = try jsonDecoder.decode(OpggRoot.self, from: data)
+        var build = root.data.build(championId: championId, requestedLane: lane)
+        build.patch = root.meta?.version
+        if mode != .ranked { build.gameLengths.removeAll { $0.minute >= 35 } }
         guard !build.runes.isEmpty || !build.augments.isEmpty else { throw BuildError.unavailable(tr("op.gg has no data for this champion")) }
         if tier != .emeraldPlus {
             build.runes = build.runes.map { var r = $0; r.source = tier.title; return r }
@@ -155,25 +200,48 @@ enum BuildService {
 
     /// Most played lane of a champion according to the cached tier list.
     static func mainLane(_ championId: Int) async -> Lane? {
-        let entries = (try? await TierListCache.shared.entries()) ?? []
+        let entries = (try? await tierList()) ?? []
         return entries.filter { $0.championId == championId }.max { $0.play < $1.play }?.lane
     }
 
-    static func tierList() async throws -> [TierListEntry] {
-        try await TierListCache.shared.entries()
+    static func tierList(_ mode: QueueMode = .ranked) async throws -> [TierListEntry] {
+        try await tierList(for: TierListQuery(mode: mode)).entries
     }
 
-    fileprivate static func fetchTierList() async throws -> [TierListEntry] {
-        let (data, _) = try await URLSession.shared.data(from: URL(string: "\(base)/ranked")!)
-        let list = try jsonDecoder.decode(OpggTierRoot.self, from: data).data
-        return list.flatMap { champ in
-            (champ.positions ?? []).compactMap { pos -> TierListEntry? in
-                guard let lane = Lane(clientPosition: pos.name), let s = pos.stats, let tier = s.tier_data else { return nil }
-                return TierListEntry(championId: champ.id, lane: lane, tier: tier.tier ?? 5, rank: tier.rank ?? 999,
-                                     winRate: s.win_rate ?? 0, pickRate: s.pick_rate ?? 0,
-                                     banRate: s.ban_rate ?? 0, play: s.play ?? 0, previousRank: tier.rank_prev_patch)
+    static func tierList(for query: TierListQuery) async throws -> TierList {
+        try await TierListCache.shared.list(query.normalized)
+    }
+
+    /// Patch of op.gg's global ranked statistics, which follow the live game.
+    static func currentPatch() async -> String? {
+        try? await tierList(for: TierListQuery()).patch
+    }
+
+    /// Whether statistics from `patch` are two or more patches behind `current`, as for a mode out of rotation.
+    static func isOutdated(_ patch: String?, current: String?) -> Bool {
+        let old = (patch ?? "").split(separator: ".").compactMap { Int($0) }, now = (current ?? "").split(separator: ".").compactMap { Int($0) }
+        guard old.count >= 2, now.count >= 2 else { return false }
+        return now[0] > old[0] || now[1] - old[1] >= 2
+    }
+
+    fileprivate static func fetchTierList(_ query: TierListQuery) async throws -> TierList {
+        let path = query.mode == .ranked ? (query.flex ? "flex" : "ranked") : query.mode.rawValue
+        let tier = query.mode == .arena ? "" : "?tier=\(query.rank.rawValue)"
+        let url = URL(string: "\(api)/\(query.region?.rawValue ?? "global")/champions/\(path)\(tier)")!
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw BuildError.unavailable(tr("op.gg returned no data (HTTP %d)", (response as? HTTPURLResponse)?.statusCode ?? 0))
+        }
+        let root = try jsonDecoder.decode(OpggTierRoot.self, from: data)
+        guard query.mode == .ranked else {
+            return TierList(entries: root.data.compactMap { $0.average_stats?.tierEntry(championId: $0.id, lane: nil) }, patch: root.meta?.version)
+        }
+        let entries = root.data.flatMap { champ in
+            (champ.positions ?? []).compactMap { pos in
+                Lane(clientPosition: pos.name).flatMap { pos.stats?.tierEntry(championId: champ.id, lane: $0) }
             }
         }
+        return TierList(entries: entries, patch: root.meta?.version)
     }
 
     static func riotRecommended(client: LCUClient, championId: Int, lane: Lane?, mapId: Int) async throws -> [RuneSetup] {
@@ -207,6 +275,7 @@ actor BuildCache {
         pending[key] = task
         defer { pending[key] = nil }
         let build = try await task.value
+        store = store.filter { Date().timeIntervalSince($0.value.date) < 300 }
         store[key] = (Date(), build)
         return build
     }
@@ -215,30 +284,32 @@ actor BuildCache {
 /// Keeps the op.gg tier list for ten minutes so lane lookups stay cheap; parallel callers share one download.
 actor TierListCache {
     static let shared = TierListCache()
-    private var cached: (date: Date, entries: [TierListEntry])?
-    private var pending: Task<[TierListEntry], Error>?
+    private var cached: [TierListQuery: (date: Date, list: TierList)] = [:]
+    private var pending: [TierListQuery: Task<TierList, Error>] = [:]
 
-    func entries() async throws -> [TierListEntry] {
-        if let cached, Date().timeIntervalSince(cached.date) < 600 { return cached.entries }
-        if let pending { return try await pending.value }
-        let task = Task { try await BuildService.fetchTierList() }
-        pending = task
-        defer { pending = nil }
-        let entries = try await task.value
-        cached = (Date(), entries)
-        return entries
+    func list(_ query: TierListQuery) async throws -> TierList {
+        if let hit = cached[query], Date().timeIntervalSince(hit.date) < 600 { return hit.list }
+        if let task = pending[query] { return try await task.value }
+        let task = Task { try await BuildService.fetchTierList(query) }
+        pending[query] = task
+        defer { pending[query] = nil }
+        let list = try await task.value
+        cached = cached.filter { Date().timeIntervalSince($0.value.date) < 600 }
+        cached[query] = (Date(), list)
+        return list
     }
 }
 
 // MARK: - op.gg payload
 
-private struct OpggRoot: Decodable { var data: OpggChampion }
-private struct OpggTierRoot: Decodable { var data: [OpggSummary] }
+private struct OpggMeta: Decodable { var version: String? }
+private struct OpggRoot: Decodable { var data: OpggChampion; var meta: OpggMeta? }
+private struct OpggTierRoot: Decodable { var data: [OpggSummary]; var meta: OpggMeta? }
 
 private struct OpggTierData: Decodable { var tier: Int?; var rank: Int?; var rank_prev_patch: Int? }
-private struct OpggGameLength: Decodable { var game_length: Int; var rate: Double }
+private struct OpggGameLength: Decodable { var game_length: Int; var rate: Double? }
 private struct OpggTrends: Decodable {
-    struct Point: Decodable { var version: String; var rate: Double; var rank: Int? }
+    struct Point: Decodable { var version: String; var rate: Double?; var rank: Int? }
     var win: [Point]?
 }
 private struct OpggStats: Decodable {
@@ -256,6 +327,14 @@ private struct OpggStats: Decodable {
     var ban_rate: Double?
     var tier_data: OpggTierData?
     var tier: Int?
+
+    /// Tier list row, with the win rate worked out from wins where op.gg leaves it out.
+    func tierEntry(championId: Int, lane: Lane?) -> TierListEntry? {
+        guard let tierData = tier_data else { return nil }
+        return TierListEntry(championId: championId, lane: lane, tier: tierData.tier ?? 5, rank: tierData.rank ?? 999,
+                             winRate: win_rate ?? Double(win ?? 0) / Double(max(play ?? 0, 1)), pickRate: pick_rate ?? 0,
+                             banRate: ban_rate ?? 0, play: play ?? 0, previousRank: tierData.rank_prev_patch)
+    }
 }
 private struct OpggPosition: Decodable { var name: String; var stats: OpggStats? }
 private struct OpggSummary: Decodable {
@@ -349,8 +428,8 @@ private struct OpggChampion: Decodable {
             skillOrder: skill,
             counters: matchups,
             availableLanes: lanes)
-        result.gameLengths = (game_lengths ?? []).map { ($0.game_length, $0.rate) }
-        result.patchTrend = (trends?.win ?? []).prefix(10).reversed().map { ($0.version, $0.rate, $0.rank ?? 0) }
+        result.gameLengths = (game_lengths ?? []).compactMap { length in length.rate.map { (length.game_length, $0) } }
+        result.patchTrend = (trends?.win ?? []).prefix(10).reversed().compactMap { point in point.rate.map { (point.version, $0, point.rank ?? 0) } }
         result.laneShares = (summary?.positions ?? []).compactMap { pos in
             Lane(clientPosition: pos.name).map { ($0, pos.stats?.role_rate ?? 0) }
         }

@@ -166,7 +166,7 @@ struct ProfileDetail: View {
             Panel(title: tr("Recent matches"), symbol: "clock.arrow.circlepath") {
                 if let average = AverageGrade.mean(profile.recent, performances) { AverageGrade(score: average) }
             } content: {
-                MatchList(games: profile.recent, performances: performances, grading: grading)
+                MatchList(games: profile.recent, performances: performances, grading: grading, lazy: true)
             }
         }
     }
@@ -186,7 +186,7 @@ struct HistoryView: View, Equatable {
             if let profile = model.myProfile {
                 let games = profile.recent + model.olderMatches
                 summary(games)
-                MatchList(games: games, performances: model.myPerformance, grading: model.isGrading)
+                MatchList(games: games, performances: model.myPerformance, grading: model.isGrading, lazy: true)
                 olderMatches
             } else {
                 HStack(spacing: 12) {

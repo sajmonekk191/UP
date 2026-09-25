@@ -54,12 +54,24 @@ final class Localizer: @unchecked Sendable {
     }
 
     func translate(_ key: String) -> String {
-        Self.tables[language]?[key] ?? key
+        Self.table(for: language)?[key] ?? key
     }
 
-    static let tables: [AppLanguage: [String: String]] = [
-        .de: de, .fr: fr, .es: es, .it: it, .pt: pt, .nl: nl, .pl: pl, .cs: cs, .sk: sk,
-    ]
+    /// Strings of one language; each table is built on first use, so only the languages shown are loaded.
+    private static func table(for language: AppLanguage) -> [String: String]? {
+        switch language {
+        case .en: nil
+        case .de: de
+        case .fr: fr
+        case .es: es
+        case .it: it
+        case .pt: pt
+        case .nl: nl
+        case .pl: pl
+        case .cs: cs
+        case .sk: sk
+        }
+    }
 }
 
 /// Translates an English UI string, formatting any `%` arguments.

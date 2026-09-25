@@ -25,9 +25,14 @@ final class LocalhostTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sen
     }
 }
 
+/// Session for the client and game APIs: live data only, so responses are neither cached nor given cookies.
 let localhostSession: URLSession = {
     let config = URLSessionConfiguration.ephemeral
     config.timeoutIntervalForRequest = 10
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    config.urlCache = nil
+    config.httpCookieStorage = nil
+    config.httpShouldSetCookies = false
     return URLSession(configuration: config, delegate: LocalhostTrustDelegate(), delegateQueue: nil)
 }()
 

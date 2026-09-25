@@ -498,13 +498,21 @@ extension String {
             .replacingOccurrences(of: "&nbsp;", with: " ")
     }
 
-    /// Game text with its markup turned into plain lines.
-    var gameText: String {
-        replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
+    /// Game text with its markup turned into plain lines, worked out once per text since icons redraw it often.
+    @MainActor var gameText: String {
+        if let plain = GameText.plain[self] { return plain }
+        let plain = replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
             .replacingOccurrences(of: "<li>", with: "\n", options: .caseInsensitive)
             .strippingTags
             .replacingOccurrences(of: "[ \t]+\n", with: "\n", options: .regularExpression)
             .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        GameText.plain[self] = plain
+        return plain
     }
+}
+
+@MainActor
+private enum GameText {
+    static var plain: [String: String] = [:]
 }

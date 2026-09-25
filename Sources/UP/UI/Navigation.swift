@@ -151,13 +151,12 @@ private struct RailButton: View {
 
 private struct RailLiveButton: View {
     let action: () -> Void
-    @State private var pulse = false
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 ZStack {
-                    Circle().fill(Theme.good.opacity(0.35)).frame(width: 22, height: 22).scaleEffect(pulse ? 1.3 : 0.7).opacity(pulse ? 0 : 1)
+                    Pulse(color: Theme.good.opacity(0.35), scale: 0.7...1.3).frame(width: 22, height: 22)
                     Image(systemName: "person.2.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
                 }
                 .frame(height: 20)
@@ -171,7 +170,6 @@ private struct RailLiveButton: View {
         }
         .buttonStyle(.plain).handCursor()
         .help(tr("Open the champ select window"))
-        .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true } }
     }
 }
 
@@ -234,13 +232,12 @@ private struct LeagueTab: View {
 /// Angular call-to-action shaped like the League client's Play button, shown while a draft runs.
 struct LeagueDraftButton: View {
     let action: () -> Void
-    @State private var pulse = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Circle().fill(Theme.good).frame(width: 7, height: 7)
-                    .overlay(Circle().stroke(Theme.good.opacity(0.6), lineWidth: 2).scaleEffect(pulse ? 2.2 : 1).opacity(pulse ? 0 : 1))
+                    .overlay(Pulse(color: Theme.good.opacity(0.6), scale: 1...2.2, lineWidth: 2))
                 Text(tr("Champ select").uppercased()).font(.system(size: 11.5, weight: .heavy)).tracking(1.1).foregroundStyle(.white)
             }
             .padding(.horizontal, 20).frame(height: 32)
@@ -251,7 +248,6 @@ struct LeagueDraftButton: View {
         }
         .buttonStyle(.plain).handCursor()
         .help(tr("Open the champ select window"))
-        .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true } }
     }
 }
 
@@ -352,13 +348,12 @@ private struct DockButton: View {
 /// Pulsing button that brings the champ select window to the front while a draft runs.
 private struct LiveDraftButton: View {
     let action: () -> Void
-    @State private var pulse = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
                 ZStack {
-                    Circle().fill(Theme.good.opacity(0.35)).frame(width: 16, height: 16).scaleEffect(pulse ? 1.25 : 0.7).opacity(pulse ? 0 : 1)
+                    Pulse(color: Theme.good.opacity(0.35), scale: 0.7...1.25).frame(width: 16, height: 16)
                     Circle().fill(Theme.good).frame(width: 8, height: 8)
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -376,7 +371,6 @@ private struct LiveDraftButton: View {
         }
         .buttonStyle(.plain).handCursor()
         .help(tr("Open the champ select window"))
-        .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true } }
     }
 }
 
@@ -456,19 +450,17 @@ private struct PillButton: View {
 
 private struct PillLiveButton: View {
     let action: () -> Void
-    @State private var pulse = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "person.2.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .background(Circle().fill(Theme.good))
-                .overlay(Circle().stroke(Theme.good.opacity(0.6), lineWidth: 2).scaleEffect(pulse ? 1.35 : 1).opacity(pulse ? 0 : 1))
+                .overlay(Pulse(color: Theme.good.opacity(0.6), scale: 1...1.35, lineWidth: 2))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain).handCursor()
         .help(tr("Open the champ select window"))
-        .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true } }
     }
 }
 

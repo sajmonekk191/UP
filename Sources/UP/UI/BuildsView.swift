@@ -3,8 +3,8 @@ import SwiftUI
 struct BuildsView: View {
     @Binding var selection: Int?
     @Binding var championClass: String?
+    @Binding var mode: QueueMode
     @State private var lane: Lane?
-    @State private var mode: QueueMode = .ranked
 
     var body: some View {
         ZStack {
@@ -208,6 +208,7 @@ private struct BuildPage: View {
     @State private var highElo: [RuneSetup] = []
     @State private var loading = true
     @State private var error: String?
+    @State private var currentPatch: String?
 
     init(championId: Int, lane: Lane?, mode: Binding<QueueMode>, back: @escaping () -> Void) {
         self.championId = championId
@@ -242,6 +243,10 @@ private struct BuildPage: View {
                     }
                 }
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning) }
+                if mode == .urf, let patch = build?.patch, BuildService.isOutdated(patch, current: currentPatch) {
+                    Label(tr("URF isn't in rotation right now, so this is op.gg's data from patch %@.", patch), systemImage: "clock.arrow.circlepath")
+                        .foregroundStyle(Theme.textSecondary)
+                }
                 if mode == .ranked, let lane, let build, build.lane != lane {
                     Label(tr("Few games as %@, showing %@.", lane.title, build.lane?.title ?? tr("main role")), systemImage: "info.circle.fill")
                         .foregroundStyle(Theme.textSecondary)
@@ -271,6 +276,7 @@ private struct BuildPage: View {
             .frame(maxWidth: .infinity)
         }
         .task(id: "\(lane?.rawValue ?? "")-\(mode.rawValue)") { await load() }
+        .task { currentPatch = await BuildService.currentPatch() }
     }
 
     private func load() async {
@@ -395,28 +401,62 @@ private struct TierBadge: View {
 
 struct TierListView: View, Equatable {
     @Environment(AppModel.self) private var model
-    @State private var entries: [TierListEntry] = []
+    @State private var loaded: [TierListQuery: TierList] = [:]
+    @Binding var mode: QueueMode
     @Binding var lane: Lane
+    @State private var flex = false
     @State private var sort: Sort = .rank
     @State private var error: String?
     @State private var shown = 20
+    @State private var currentPatch: String?
     var onOpen: (Int) -> Void
 
-    /// The lane is read through its binding and opening a build always does the same.
+    /// The mode and lane are read through their bindings and opening a build always does the same.
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
 
     enum Sort: String, CaseIterable { case rank, winRate, pickRate, banRate }
 
+    /// Games a champion needs before it can headline the page.
+    private static let reliableGames = 100
+
     var body: some View {
-        Screen(title: tr("Tier list"), subtitle: tr("op.gg · all regions · current patch · click to open the build")) {
-            Segmented(options: Lane.allCases.map { ($0, $0.title) }, selection: $lane)
+        let settings = Bindable(model.settings)
+        Screen(title: tr("Tier list"), subtitle: subtitle) {
+            VStack(alignment: .trailing, spacing: 10) {
+                HStack(spacing: 10) {
+                    MenuPicker(symbol: "globe", title: model.settings.tierListRegion?.code ?? tr("All regions"),
+                               groups: [[(Region?.none, tr("All regions"))], Region.allCases.map { (Region?.some($0), "\($0.code) · \($0.title)") }],
+                               selection: settings.tierListRegion)
+                    Segmented(options: QueueMode.allCases.map { ($0, $0.title) }, selection: $mode)
+                }
+                if mode != .arena {
+                    HStack(spacing: 10) {
+                        MenuPicker(symbol: "shield.lefthalf.filled", title: model.settings.tierListRank.title,
+                                   groups: [EloTier.brackets.map { ($0, $0.title) }, EloTier.singleTiers.map { ($0, $0.title) }],
+                                   selection: settings.tierListRank)
+                        if mode == .ranked {
+                            Segmented(options: [(false, tr("Solo / Duo")), (true, tr("Flex"))], selection: $flex)
+                            Segmented(options: Lane.allCases.map { ($0, $0.title) }, selection: $lane)
+                        }
+                    }
+                }
+            }
         } content: {
             if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning) }
+            if mode == .urf, let patch = list?.patch, BuildService.isOutdated(patch, current: currentPatch) {
+                Label(tr("URF isn't in rotation right now, so this is op.gg's data from patch %@.", patch), systemImage: "clock.arrow.circlepath")
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if let games = typicalGames, games < Self.reliableGames {
+                Label(tr("Few games in this selection (about %d per champion), so the numbers are unreliable.", games), systemImage: "exclamationmark.circle")
+                    .foregroundStyle(Theme.warning)
+            }
             if entries.isEmpty, error == nil {
                 TierListSkeleton(header: header)
             } else {
                 let rows = self.rows
                 topPicks
+                movers
                 Panel(padding: 0) {
                     LazyVStack(spacing: 0) {
                         header
@@ -431,27 +471,95 @@ struct TierListView: View, Equatable {
                 }
             }
         }
-        .task { do { entries = try await BuildService.tierList() } catch { self.error = error.localizedDescription } }
+        .task(id: query) { [query] in
+            error = nil
+            do { loaded[query] = try await BuildService.tierList(for: query) } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        }
+        .task { currentPatch = await BuildService.currentPatch() }
         .onChange(of: lane) { shown = 20 }
+        .onChange(of: query) { shown = 20 }
     }
 
-    private var topPicks: some View {
-        let best = entries.filter { $0.lane == lane && $0.pickRate > 0.01 }.sorted { $0.winRate > $1.winRate }.prefix(4)
-        return HStack(spacing: 12) {
-            ForEach(Array(best)) { entry in
-                Button { onOpen(entry.championId) } label: {
-                    HStack(spacing: 12) {
-                        ChampionIcon(id: entry.championId, size: 46, ring: Theme.accent)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(tr("HIGHEST WIN RATE")).font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
-                            Text(model.gameData.championName(entry.championId)).font(.headline).foregroundStyle(Theme.text)
-                            Text(percent(entry.winRate)).font(.callout.weight(.semibold)).foregroundStyle(Theme.win)
+    private var query: TierListQuery {
+        TierListQuery(mode: mode, flex: flex, region: model.settings.tierListRegion, rank: model.settings.tierListRank).normalized
+    }
+    private var list: TierList? { loaded[query] }
+    private var entries: [TierListEntry] { list?.entries ?? [] }
+    private var shownLane: Lane? { mode == .ranked ? lane : nil }
+
+    private var subtitle: String {
+        guard let patch = list?.patch else { return tr("op.gg · click to open the build") }
+        return tr("op.gg · patch %@ · click to open the build", patch)
+    }
+
+    /// Median games per champion in the shown list.
+    private var typicalGames: Int? {
+        let plays = entries.filter { $0.lane == shownLane }.map(\.play).sorted()
+        return plays.isEmpty ? nil : plays[plays.count / 2]
+    }
+
+    /// Champions that climbed or dropped the most places since the last patch.
+    @ViewBuilder
+    private var movers: some View {
+        let moved = entries.filter { $0.lane == shownLane && $0.pickRate > 0.005 && $0.play >= Self.reliableGames && $0.rankChange != 0 }
+        let rising = moved.filter { $0.rankChange > 0 }.sorted { $0.rankChange > $1.rankChange }.prefix(4)
+        let falling = moved.filter { $0.rankChange < 0 }.sorted { $0.rankChange < $1.rankChange }.prefix(4)
+        if !rising.isEmpty || !falling.isEmpty {
+            HStack(alignment: .top, spacing: 12) {
+                moverPanel(tr("Rising this patch"), symbol: "arrow.up.right", Array(rising))
+                moverPanel(tr("Falling this patch"), symbol: "arrow.down.right", Array(falling))
+            }
+        }
+    }
+
+    private func moverPanel(_ title: String, symbol: String, _ moved: [TierListEntry]) -> some View {
+        Panel(title: title, symbol: symbol, padding: 14) {
+            if moved.isEmpty { Text(tr("No data.")).font(.callout).foregroundStyle(Theme.textMuted) }
+            HStack(spacing: 8) {
+                ForEach(moved) { entry in
+                    Button { onOpen(entry.championId) } label: {
+                        HStack(spacing: 8) {
+                            ChampionIcon(id: entry.championId, size: 34)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.gameData.championName(entry.championId)).font(.callout.weight(.semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                                HStack(spacing: 3) {
+                                    Image(systemName: entry.rankChange > 0 ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill").font(.system(size: 7))
+                                    Text("\(abs(entry.rankChange))").font(.caption.weight(.bold).monospacedDigit())
+                                    Text("· #\(entry.rank) · \(tierName(entry.tier))").font(.caption.monospacedDigit()).foregroundStyle(Theme.textMuted)
+                                }
+                                .foregroundStyle(entry.rankChange > 0 ? Theme.win : Theme.loss)
+                            }
                         }
-                        Spacer()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
-                    .padding(12).panelBackground()
+                    .buttonStyle(.plain).handCursor()
+                    .help(tr("Moved %d places since last patch", abs(entry.rankChange)))
                 }
-                .buttonStyle(.plain).handCursor()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var topPicks: some View {
+        let best = entries.filter { $0.lane == shownLane && $0.pickRate > 0.01 && $0.play >= Self.reliableGames }.sorted { $0.winRate > $1.winRate }.prefix(4)
+        if !best.isEmpty {
+            HStack(spacing: 12) {
+                ForEach(Array(best)) { entry in
+                    Button { onOpen(entry.championId) } label: {
+                        HStack(spacing: 12) {
+                            ChampionIcon(id: entry.championId, size: 46, ring: Theme.accent)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(tr("HIGHEST WIN RATE")).font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
+                                Text(model.gameData.championName(entry.championId)).font(.headline).foregroundStyle(Theme.text)
+                                Text(percent(entry.winRate)).font(.callout.weight(.semibold)).foregroundStyle(Theme.win)
+                            }
+                            Spacer()
+                        }
+                        .padding(12).panelBackground()
+                    }
+                    .buttonStyle(.plain).handCursor()
+                }
             }
         }
     }
@@ -502,7 +610,7 @@ struct TierListView: View, Equatable {
                 .frame(width: 60, alignment: .leading)
             WinRateMeter(winRate: entry.winRate).frame(width: 190).padding(.trailing, 30)
             Text(percent(entry.pickRate)).font(.callout.monospacedDigit()).foregroundStyle(Theme.text).frame(width: 100, alignment: .leading)
-            Text(percent(entry.banRate)).font(.callout.monospacedDigit()).foregroundStyle(Theme.textSecondary).frame(width: 100, alignment: .leading)
+            Text(percent(entry.banRate > 0 ? entry.banRate : nil)).font(.callout.monospacedDigit()).foregroundStyle(Theme.textSecondary).frame(width: 100, alignment: .leading)
             Text(entry.play.formatted()).font(.callout.monospacedDigit()).foregroundStyle(Theme.textMuted).frame(width: 90, alignment: .trailing)
         }
         .padding(.horizontal, 18).padding(.vertical, 8)
@@ -511,13 +619,45 @@ struct TierListView: View, Equatable {
     }
 
     private var rows: [TierListEntry] {
-        let filtered = entries.filter { $0.lane == lane && $0.pickRate > 0.003 }
+        let filtered = entries.filter { $0.lane == shownLane && $0.pickRate > 0.003 }
         switch sort {
         case .rank: return filtered.sorted { $0.rank < $1.rank }
         case .winRate: return filtered.sorted { $0.winRate > $1.winRate }
         case .pickRate: return filtered.sorted { $0.pickRate > $1.pickRate }
-        case .banRate: return filtered.sorted { $0.banRate > $1.banRate }
+        case .banRate: return filtered.sorted { $0.banRate != $1.banRate ? $0.banRate > $1.banRate : $0.rank < $1.rank }
         }
+    }
+}
+
+/// Dropdown shaped like `Segmented`, for choosing one of many values.
+private struct MenuPicker<Value: Hashable>: View {
+    let symbol: String
+    let title: String
+    let groups: [[(Value, String)]]
+    @Binding var selection: Value
+
+    var body: some View {
+        Menu {
+            ForEach(groups.indices, id: \.self) { index in
+                if index > 0 { Divider() }
+                ForEach(groups[index], id: \.0) { value, name in
+                    Button { selection = value } label: {
+                        if value == selection { Label(name, systemImage: "checkmark") } else { Text(name) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                Text(title).font(.callout.weight(.medium)).foregroundStyle(Theme.text).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.textMuted)
+            }
+            .padding(.horizontal, 12).frame(height: 34)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Theme.hairline))
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .menuStyle(.button).buttonStyle(.plain).handCursor().menuIndicator(.hidden).fixedSize()
     }
 }
 

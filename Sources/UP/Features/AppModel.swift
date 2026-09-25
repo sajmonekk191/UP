@@ -24,6 +24,7 @@ final class AppModel {
     let hud = HUDState()
     private let scout = PlayerScout()
     private let archive = MatchArchive()
+    private let ranks = RankHistory()
 
     private(set) var connection: ConnectionState = .searching
     private(set) var client: LCUClient?
@@ -32,6 +33,7 @@ final class AppModel {
     private(set) var myProfile: PlayerProfile?
     private(set) var myMasteries: [ChampionMastery] = []
     private(set) var myPerformance: [Int: GamePerformance] = [:]
+    private(set) var rankHistory: [RankHistory.Queue: [RankSnapshot]] = [:]
     private(set) var isGrading = false
     private(set) var olderMatches: [HistoryGame] = []
     private(set) var isLoadingOlder = false
@@ -39,28 +41,39 @@ final class AppModel {
     @ObservationIgnored private var opggPuuids: [String: String] = [:]
     @ObservationIgnored private var detailCache: [Int: HistoryGame] = [:]
     private var refreshes = 0
-    private(set) var phase = "None"
+    private(set) var phase = "None" { didSet { syncDraftFlag() } }
     private(set) var notices: [Notice] = []
 
-    private(set) var champSelect: ChampSelectSession?
+    private(set) var champSelect: ChampSelectSession? { didSet { syncDraftFlag() } }
     private(set) var teamProfiles: [String: PlayerProfile] = [:]
     private(set) var gameSession: GameflowSession?
     private(set) var live: LiveGameSnapshot?
-    private(set) var isPreview = false
+    private(set) var isPreview = false { didSet { syncDraftFlag() } }
+    /// Whether a draft is shown; stored so views that only appear with it skip every session update.
+    private(set) var isInChampSelect = false
+    private(set) var previewMode: QueueMode = .ranked
     private(set) var isHUDPreview = false
     private(set) var friends: [Friend] = []
     private var recentPlayerKeys: [String] = UserDefaults.standard.stringArray(forKey: "recentPlayers") ?? []
     var hudMode: HUDMode = .hud
     var hudClosed = false
+    /// Player whose profile the main window opens next, asked for from the in-game overlay.
+    var profileRequest: PlayerQuery?
 
     private var liveTask: Task<Void, Never>?
     private var lastImportKey: String?
     private var lastPickTurnActionId: Int?
-    private var acceptScheduled = false
+    private var readyCheckHandled = false
 
     var mapId: Int { gameSession?.map?.id ?? (gameSession?.gameData?.queue?.gameMode == "ARAM" ? 12 : 11) }
-    var queueMode: QueueMode { mapId == 12 ? .aram : .ranked }
-    var isInChampSelect: Bool { champSelect != nil && (phase == "ChampSelect" || isPreview) }
+    var queueMode: QueueMode {
+        if isPreview { return previewMode }
+        switch gameSession?.gameData?.queue?.gameMode {
+        case "CHERRY": return .arena
+        case "URF": return .urf
+        default: return mapId == 12 ? .aram : mapId == 30 ? .arena : .ranked
+        }
+    }
     /// Server the search bar looks up accounts on: the one picked in the search bar, else the client's.
     var searchRegion: Region { settings.searchRegion ?? clientRegion ?? .euw }
     var recentPlayers: [PlayerQuery] { recentPlayerKeys.compactMap { PlayerQuery(stored: $0, fallback: clientRegion ?? .eune) } }
@@ -117,6 +130,7 @@ final class AppModel {
         await scout.invalidate()
         async let masteries: [ChampionMastery]? = try? client.get("/lol-champion-mastery/v1/local-player/champion-mastery")
         myProfile = await scout.profile(puuid: me.puuid, client: client, historyCount: 20)
+        await recordRanks(myProfile?.solo, myProfile?.flex)
         myMasteries = await masteries ?? []
         olderMatches = []
         olderExhausted = false
@@ -125,6 +139,22 @@ final class AppModel {
         myPerformance = await scout.performances(of: myProfile?.recent ?? [], puuid: me.puuid, client: client)
         await cacheDetails(of: myProfile?.recent ?? [])
         isGrading = false
+    }
+
+    /// Stores the current Solo/Duo and Flex standing of the signed-in player when it changed.
+    private func recordRanks(_ solo: RankedQueue?, _ flex: RankedQueue?) async {
+        guard let me else { return }
+        rankHistory[.solo] = await ranks.record(solo, as: .solo, puuid: me.puuid)
+        rankHistory[.flex] = await ranks.record(flex, as: .flex, puuid: me.puuid)
+    }
+
+    /// Reads the rank again once the client has settled the LP of the game that just ended.
+    private func refreshRanksAfterGame() async {
+        try? await Task.sleep(for: .seconds(40))
+        guard let client, let me, let stats: RankedStats = try? await client.get("/lol-ranked/v1/ranked-stats/\(me.puuid)") else { return }
+        myProfile?.solo = stats.solo
+        myProfile?.flex = stats.flex
+        await recordRanks(stats.solo, stats.flex)
     }
 
     /// Full match already loaded for this game, so its details can open without waiting.
@@ -196,7 +226,7 @@ final class AppModel {
 
     /// Custom games and games against bots run the older champ select, so both sessions are watched.
     private static let champSelectURIs = ["/lol-champ-select/v1/session", "/lol-champ-select-legacy/v1/session"]
-    private static let eventURIs = ["/lol-gameflow/v1/gameflow-phase", "/lol-matchmaking/v1/ready-check",
+    private static let eventURIs = ["/lol-gameflow/v1/gameflow-phase", "/lol-matchmaking/v1/ready-check", "/lol-lobby-team-builder/v1/matchmaking",
                                     "/lol-summoner/v1/current-summoner"] + champSelectURIs
 
     private func handle(_ event: LCUEvent) async {
@@ -205,6 +235,8 @@ final class AppModel {
             if let phase = event.decode(String.self) { await setPhase(phase) }
         case "/lol-matchmaking/v1/ready-check":
             if let check = event.decode(ReadyCheck.self) { handleReadyCheck(check) }
+        case "/lol-lobby-team-builder/v1/matchmaking":
+            if let check = event.decode(TeamBuilderMatchmaking.self)?.readyCheck { handleReadyCheck(check) }
         case let uri where Self.champSelectURIs.contains(uri):
             if isPreview { endPreview() }
             if event.eventType == "Delete" { champSelect = nil } else if let session = event.decode(ChampSelectSession.self) {
@@ -221,6 +253,7 @@ final class AppModel {
         guard newPhase != phase else { return }
         if isPreview { endPreview() }
         phase = newPhase
+        if newPhase == "ReadyCheck" { matchFound() } else { readyCheckHandled = false }
 
         switch newPhase {
         case "ChampSelect":
@@ -237,6 +270,7 @@ final class AppModel {
             stopLiveTracking()
             if newPhase == "EndOfGame" {
                 Task { await refreshMyProfile() }
+                Task { await refreshRanksAfterGame() }
                 if settings.autoPlayAgain {
                     try? await Task.sleep(for: .seconds(2))
                     await perform(tr("Returned to lobby")) { try await $0.post("/lol-lobby/v2/play-again") }
@@ -265,22 +299,28 @@ final class AppModel {
         }
     }
 
+    private func syncDraftFlag() {
+        let inDraft = champSelect != nil && (phase == "ChampSelect" || isPreview)
+        if inDraft != isInChampSelect { isInChampSelect = inDraft }
+    }
+
     // MARK: Ready check
 
     private func handleReadyCheck(_ check: ReadyCheck) {
-        guard check.state == "InProgress", check.playerResponse == "None" else {
-            acceptScheduled = false
-            return
-        }
+        if check.state == "InProgress", check.playerResponse == "None" { matchFound() }
+    }
+
+    /// Alerts and auto-accepts once per found match, whichever of the client's ready check events or the gameflow phase arrives first; leaving the ReadyCheck phase ends it.
+    private func matchFound() {
+        guard !readyCheckHandled else { return }
+        readyCheckHandled = true
         if settings.soundAlerts { NSSound(named: "Glass")?.play(); NSApp.requestUserAttention(.criticalRequest) }
-        guard settings.autoAccept, !acceptScheduled else { return }
-        acceptScheduled = true
+        guard settings.autoAccept else { return }
         let delay = settings.acceptDelay
         Task {
             try? await Task.sleep(for: .seconds(delay))
-            guard acceptScheduled, settings.autoAccept else { return }
-            await perform(tr("Match accepted")) { try await $0.post("/lol-matchmaking/v1/ready-check/accept") }
-            acceptScheduled = false
+            guard readyCheckHandled, settings.autoAccept else { return }
+            await perform(tr("Match accepted")) { try await ClientActions.acceptMatch(client: $0) }
         }
     }
 
@@ -288,7 +328,7 @@ final class AppModel {
 
     private func handleChampSelect(_ session: ChampSelectSession) async {
         let previous = champSelect
-        champSelect = session
+        if session != previous { champSelect = session }
 
         if let action = session.myActiveAction, action.id != lastPickTurnActionId {
             lastPickTurnActionId = action.id
@@ -328,10 +368,10 @@ final class AppModel {
         let name = gameData.championName(championId)
         let preferred = settings.runeSource == .riot ? (riot.first ?? build?.runes.first) : (build?.runes.first ?? riot.first)
 
-        if settings.autoRunes, let setup = preferred {
+        if settings.autoRunes, mode != .arena, let setup = preferred {
             await applyRunes(setup, championId: championId)
         }
-        if settings.autoSpells, phase == "ChampSelect", let spells = build?.spells.first?.ids ?? preferred?.spells {
+        if settings.autoSpells, mode != .arena, phase == "ChampSelect", let spells = build?.spells.first?.ids ?? preferred?.spells {
             await perform(tr("Summoner spells set")) { try await ClientActions.setSpells(spells, flashOnF: self.settings.flashOnF, client: $0) }
         }
         if settings.autoItemSets, let build, let summonerId = me?.summonerId {
@@ -396,31 +436,65 @@ final class AppModel {
 
     // MARK: Preview
 
-    /// Opens the champ select window with a sample draft so it can be explored outside a game.
-    func startPreview() {
+    /// Opens the champ select window with a sample draft of the mode so it can be explored outside a game.
+    func startPreview(mode: QueueMode = .ranked) {
         guard let me else { return notify(tr("Connect to the client first"), .warning) }
         isPreview = true
+        previewMode = mode
         advisor.reset()
-        let enemies = [238, 64, 51, 57, 25]
-        let allies = [(266, "TOP"), (0, "MIDDLE"), (0, "JUNGLE"), (0, "BOTTOM"), (0, "UTILITY")]
-        let myTeam = allies.enumerated().map { index, pair in
-            ChampSelectPlayer(cellId: index, championId: pair.0, championPickIntent: nil, assignedPosition: pair.1,
-                              puuid: index == 1 ? me.puuid : nil, gameName: index == 1 ? me.gameName : nil)
+        func player(_ cell: Int, _ championId: Int, intent: Int? = nil, position: String? = nil) -> ChampSelectPlayer {
+            ChampSelectPlayer(cellId: cell, championId: championId, championPickIntent: intent, assignedPosition: position,
+                              puuid: cell == 1 ? me.puuid : nil, gameName: cell == 1 ? me.gameName : nil)
         }
-        let theirTeam = enemies.enumerated().map { index, id in
-            ChampSelectPlayer(cellId: 5 + index, championId: index < 3 ? id : 0, championPickIntent: nil, assignedPosition: nil)
+        let bans = [ChampSelectAction(id: 1, actorCellId: 5, championId: 157, completed: true, isInProgress: false, type: "ban"),
+                    ChampSelectAction(id: 2, actorCellId: 0, championId: 122, completed: true, isInProgress: false, type: "ban")]
+        let myPick = ChampSelectAction(id: 3, actorCellId: 1, championId: 103, completed: false, isInProgress: true, type: "pick")
+        let timer = ChampSelectTimer(adjustedTimeLeftInPhase: 90_000, internalNowInEpochMs: Date().timeIntervalSince1970 * 1000)
+        let session = switch mode {
+        case .aram, .urf:
+            ChampSelectSession(localPlayerCellId: 1, myTeam: [player(0, 222), player(1, 86), player(2, 99), player(3, 32), player(4, 25)],
+                               theirTeam: [], actions: [], timer: timer, benchEnabled: true,
+                               benchChampions: [22, 161, 18, 74].map { BenchChampion(championId: $0, isPriority: false) },
+                               allowRerolling: true, rerollsRemaining: 1)
+        case .arena:
+            ChampSelectSession(localPlayerCellId: 1, myTeam: [player(0, 875), player(1, 0), player(2, 0, intent: 350)],
+                               theirTeam: [], actions: [bans, [myPick]], timer: timer)
+        case .ranked:
+            ChampSelectSession(localPlayerCellId: 1,
+                               myTeam: [(266, "TOP"), (0, "MIDDLE"), (0, "JUNGLE"), (0, "BOTTOM"), (0, "UTILITY")].enumerated().map { player($0, $1.0, position: $1.1) },
+                               theirTeam: [238, 64, 51, 57, 25].enumerated().map { player(5 + $0, $0 < 3 ? $1 : 0) },
+                               actions: [bans, [myPick]], timer: timer)
         }
-        let actions: [[ChampSelectAction]] = [
-            [ChampSelectAction(id: 1, actorCellId: 5, championId: 157, completed: true, isInProgress: false, type: "ban"),
-             ChampSelectAction(id: 2, actorCellId: 0, championId: 122, completed: true, isInProgress: false, type: "ban")],
-            [ChampSelectAction(id: 3, actorCellId: 1, championId: 103, completed: false, isInProgress: true, type: "pick")],
-        ]
-        let session = ChampSelectSession(localPlayerCellId: 1, myTeam: myTeam, theirTeam: theirTeam, actions: actions,
-                                         timer: ChampSelectTimer(adjustedTimeLeftInPhase: 90_000,
-                                                                 internalNowInEpochMs: Date().timeIntervalSince1970 * 1000))
         champSelect = session
         teamProfiles = [:]
         Task { await scoutTeam([me.puuid]) }
+        advisor.update(session, model: self)
+    }
+
+    /// Takes a champion from the bench of an all-random draft; your current one goes onto the bench.
+    func takeFromBench(_ championId: Int) async {
+        guard isPreview else {
+            return await perform(tr("%@ taken from the bench", gameData.championName(championId))) {
+                try await $0.post("/lol-champ-select/v1/session/bench/swap/\(championId)")
+            }
+        }
+        guard var session = champSelect, let current = session.me?.championId else { return }
+        session.benchChampions = session.benchChampions?.map { $0.championId == championId ? BenchChampion(championId: current) : $0 }
+        session.myTeam = session.myTeam.map { var p = $0; if p.cellId == session.localPlayerCellId { p.championId = championId }; return p }
+        champSelect = session
+        advisor.update(session, model: self)
+    }
+
+    /// Rerolls your champion in an all-random draft; the old one goes onto the bench.
+    func reroll() async {
+        guard isPreview else { return await perform(tr("Champion rerolled")) { try await $0.post("/lol-champ-select/v1/session/my-selection/reroll") } }
+        guard var session = champSelect, let current = session.me?.championId else { return }
+        let taken = Set(session.myTeam.compactMap(\.championId) + (session.benchChampions ?? []).map(\.championId))
+        guard let next = gameData.sortedChampions.map(\.id).filter({ !taken.contains($0) }).randomElement() else { return }
+        session.benchChampions = (session.benchChampions ?? []) + [BenchChampion(championId: current)]
+        session.myTeam = session.myTeam.map { var p = $0; if p.cellId == session.localPlayerCellId { p.championId = next }; return p }
+        session.rerollsRemaining = max((session.rerollsRemaining ?? 1) - 1, 0)
+        champSelect = session
         advisor.update(session, model: self)
     }
 
@@ -460,18 +534,22 @@ final class AppModel {
         liveTask = Task {
             var lastError: String?
             while !Task.isCancelled {
-                do {
-                    let data = try await LiveClient.allGameData()
-                    lastError = nil
-                    if data.gameData.gameTime > 1 {
-                        let snapshot = LiveGameAnalyzer.analyze(data, items: gameData.items)
-                        live = snapshot
-                        hud.ingest(snapshot, model: self)
-                    }
-                } catch is DecodingError {
-                    let message = tr("Game data could not be read, the HUD is paused")
-                    if lastError != message { notify(message, .warning); lastError = message }
-                } catch {}
+                if !settings.showOverlay {
+                    if live != nil { live = nil; hud.reset() }
+                } else {
+                    do {
+                        let data = try await LiveClient.allGameData()
+                        lastError = nil
+                        if data.gameData.gameTime > 1 {
+                            let snapshot = LiveGameAnalyzer.analyze(data, items: gameData.items)
+                            live = snapshot
+                            hud.ingest(snapshot, model: self)
+                        }
+                    } catch is DecodingError {
+                        let message = tr("Game data could not be read, the HUD is paused")
+                        if lastError != message { notify(message, .warning); lastError = message }
+                    } catch {}
+                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }

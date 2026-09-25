@@ -4,3 +4,4 @@
 dist/
 *.xcodeproj/
 xcuserdata/
+.vscode/ # jinak se ti tam commitne

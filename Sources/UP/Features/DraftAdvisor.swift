@@ -19,6 +19,16 @@ struct PickSuggestion: Identifiable, Sendable {
     var id: Int { championId }
 }
 
+/// A champion you can play in an all-random draft: yours or one on the bench, with its strength in the mode.
+struct BenchOption: Identifiable, Sendable {
+    var championId: Int
+    var isYours: Bool
+    var entry: TierListEntry?
+    var personalGames: Int
+    var personalWinRate: Double?
+    var id: Int { championId }
+}
+
 struct BanSuggestion: Identifiable, Sendable {
     var championId: Int
     var winRate: Double
@@ -85,6 +95,7 @@ final class DraftAdvisor {
     private(set) var loadingFocus = false
     private(set) var laneOpponent: Int?
     private(set) var gamePlan: [Tip] = []
+    private(set) var bench: [BenchOption] = []
 
     var laneOverride: Lane? { didSet { if oldValue != laneOverride { suggestionKey = "" } } }
 
@@ -93,24 +104,29 @@ final class DraftAdvisor {
     private var suggestionKey = ""
     private var focusKey = ""
     private var compKey = ""
+    private var benchKey = ""
     private var suggestionTask: Task<Void, Never>?
     private var focusTask: Task<Void, Never>?
+    private var benchTask: Task<Void, Never>?
 
     var build: ChampionBuild? { builds[.emeraldPlus] }
 
     func reset() {
-        suggestions = []; bans = []; builds = [:]; riotRunes = []; gamePlan = []; compTips = []
+        suggestions = []; bans = []; builds = [:]; riotRunes = []; gamePlan = []; compTips = []; bench = []
         focusChampion = nil; focusLocked = false; laneOpponent = nil; laneOverride = nil
-        suggestionKey = ""; focusKey = ""; compKey = ""; owned = []; lastBuilds = [:]
+        suggestionKey = ""; focusKey = ""; compKey = ""; benchKey = ""; owned = []; lastBuilds = [:]
         ally = TeamComposition(); enemy = TeamComposition()
     }
 
     /// Recomputes whatever the new session state invalidates.
     func update(_ session: ChampSelectSession, model: AppModel) {
         let me = session.me
-        let isAram = model.queueMode == .aram
+        let mode = model.queueMode
+        let isAram = mode == .aram
+        let allRandom = session.benchEnabled == true
         let assigned = Lane(clientPosition: me?.assignedPosition)
-        lane = isAram ? nil : (laneOverride ?? assigned ?? model.myProfile?.roleShares.first?.lane ?? .middle)
+        let lane = mode == .ranked ? (laneOverride ?? assigned ?? model.myProfile?.roleShares.first?.lane ?? .middle) : nil
+        if lane != self.lane { self.lane = lane }
 
         let actions: [ChampSelectAction] = (session.actions ?? []).flatMap { $0 }
         let bans: [ChampSelectAction] = actions.filter { $0.type == "ban" && $0.completed == true }
@@ -125,17 +141,26 @@ final class DraftAdvisor {
             Task { await refreshComps(allyIds: allyIds, enemyIds: enemyIds, model: model) }
         }
 
-        let newSuggestionKey = "\(lane?.rawValue ?? "aram")|\(enemyIds.sorted())|\(taken.sorted())|\(allyIds.filter { $0 != me?.displayedChampionId }.sorted())"
-        if !isAram, newSuggestionKey != suggestionKey {
+        let teammates = allyIds.filter { $0 != me?.displayedChampionId }
+        let newSuggestionKey = "\(mode.rawValue)|\(lane?.rawValue ?? "-")|\(enemyIds.sorted())|\(taken.sorted())|\(teammates.sorted())"
+        if !allRandom, newSuggestionKey != suggestionKey {
             suggestionKey = newSuggestionKey
             suggestionTask?.cancel()
-            suggestionTask = Task { await refreshSuggestions(enemyIds: enemyIds, taken: taken, allyIds: allyIds, model: model) }
+            suggestionTask = Task { await refreshSuggestions(enemyIds: enemyIds, taken: taken, teammates: teammates, mode: mode, model: model) }
+        }
+
+        let benchIds = allRandom ? (session.benchChampions ?? []).map(\.championId) : []
+        let newBenchKey = "\(mode.rawValue)|\(me?.championId ?? 0)|\(benchIds)"
+        if newBenchKey != benchKey {
+            benchKey = newBenchKey
+            benchTask?.cancel()
+            benchTask = Task { await refreshBench(mine: me?.championId ?? 0, benchIds: benchIds, mode: mode, model: model) }
         }
 
         let champion = me?.displayedChampionId ?? 0
         let myCell = session.localPlayerCellId
         let pickedByMe: Bool = actions.contains { (a: ChampSelectAction) -> Bool in a.actorCellId == myCell && a.type == "pick" && a.completed == true }
-        let locked = pickedByMe || (isAram && champion > 0)
+        let locked = pickedByMe || ((isAram || allRandom) && champion > 0)
         let newFocusKey = "\(champion)|\(locked)|\(lane?.rawValue ?? "-")|\(enemyIds.sorted())"
         if newFocusKey != focusKey {
             focusKey = newFocusKey
@@ -148,8 +173,9 @@ final class DraftAdvisor {
 
     // MARK: Suggestions
 
-    private func refreshSuggestions(enemyIds: [Int], taken: Set<Int>, allyIds: [Int], model: AppModel) async {
-        guard let lane, let client = model.client else { return }
+    private func refreshSuggestions(enemyIds: [Int], taken: Set<Int>, teammates: [Int], mode: QueueMode, model: AppModel) async {
+        let lane = self.lane
+        guard mode != .ranked || lane != nil, let client = model.client else { return }
         loadingSuggestions = true
         defer { if !Task.isCancelled { loadingSuggestions = false } }
 
@@ -161,7 +187,7 @@ final class DraftAdvisor {
                 return has ? champ["id"] as? Int : nil
             })
         }
-        let tierList = (try? await BuildService.tierList()) ?? []
+        let tierList = (try? await BuildService.tierList(mode)) ?? []
         let laneEntries = tierList.filter { $0.lane == lane }
 
         var candidates = laneEntries.filter { !taken.contains($0.championId) && (owned.isEmpty || owned.contains($0.championId)) && $0.pickRate > 0.004 }
@@ -171,21 +197,26 @@ final class DraftAdvisor {
             if let entry = laneEntries.first(where: { $0.championId == id }) { candidates.append(entry) }
         }
 
-        let opponent = enemyIds.first { id in tierList.filter { $0.championId == id }.max { $0.play < $1.play }?.lane == lane }
+        let opponent = mode == .ranked ? enemyIds.first { id in tierList.filter { $0.championId == id }.max { $0.play < $1.play }?.lane == lane } : nil
         laneOpponent = opponent
+
+        var synergies: [Int: [ChampionBuild.Matchup]] = [:]
+        if mode == .arena {
+            for id in teammates { synergies[id] = (try? await BuildService.opggBuild(championId: id, lane: nil, mode: .arena))?.duoPartners }
+        }
 
         var results: [PickSuggestion] = []
         await withTaskGroup(of: (TierListEntry, ChampionBuild?).self) { group in
             for entry in candidates {
                 group.addTask {
-                    async let build = try? BuildService.opggBuild(championId: entry.championId, lane: lane, mode: .ranked)
+                    async let build = try? BuildService.opggBuild(championId: entry.championId, lane: lane, mode: mode)
                     _ = await model.gameData.detail(entry.championId, client: client)
                     return (entry, await build)
                 }
             }
             for await (entry, build) in group {
                 if let build { lastBuilds[entry.championId] = build }
-                results.append(score(entry, build: build, enemyIds: enemyIds, opponent: opponent, model: model))
+                results.append(score(entry, build: build, enemyIds: enemyIds, opponent: opponent, synergies: synergies, model: model))
             }
         }
         guard !Task.isCancelled else { return }
@@ -194,7 +225,8 @@ final class DraftAdvisor {
         bans = banSuggestions(laneEntries: laneEntries, taken: taken, model: model)
     }
 
-    private func score(_ entry: TierListEntry, build: ChampionBuild?, enemyIds: [Int], opponent: Int?, model: AppModel) -> PickSuggestion {
+    private func score(_ entry: TierListEntry, build: ChampionBuild?, enemyIds: [Int], opponent: Int?,
+                       synergies: [Int: [ChampionBuild.Matchup]], model: AppModel) -> PickSuggestion {
         var score = 50.0 + (entry.winRate - 0.5) * 300
         var reasons: [Reason] = []
         if entry.tier <= 1 { score += 4 }
@@ -210,6 +242,13 @@ final class DraftAdvisor {
             let name = model.gameData.championName(enemyId)
             if m.winRate >= 0.52 { reasons.append(Reason(text: tr("Beats %@ (%@)", name, percent(m.winRate, digits: 0)), positive: true)) }
             if m.winRate <= 0.47 { reasons.append(Reason(text: tr("Weak vs %@ (%@)", name, percent(m.winRate, digits: 0)), positive: false)) }
+        }
+        for (partner, list) in synergies {
+            guard let s = list.first(where: { $0.championId == entry.championId }) else { continue }
+            score += (s.winRate - 0.5) * 120
+            let name = model.gameData.championName(partner)
+            if s.winRate >= 0.53 { reasons.append(Reason(text: tr("Great with %@ (%@)", name, percent(s.winRate, digits: 0)), positive: true)) }
+            if s.winRate <= 0.47 { reasons.append(Reason(text: tr("Weak with %@ (%@)", name, percent(s.winRate, digits: 0)), positive: false)) }
         }
 
         let record = model.myProfile?.usesPracticeGames == true ? nil : model.myProfile?.record(for: entry.championId)
@@ -231,6 +270,20 @@ final class DraftAdvisor {
         return PickSuggestion(championId: entry.championId, score: Int(min(max(score, 0), 99)), winRate: entry.winRate, tier: entry.tier,
                               matchups: matchups, personalGames: record?.games ?? 0, personalWinRate: record?.winRate,
                               masteryPoints: points, reasons: reasons)
+    }
+
+    /// Ranks your champion and the bench by their strength in the mode, strongest first.
+    private func refreshBench(mine: Int, benchIds: [Int], mode: QueueMode, model: AppModel) async {
+        guard !benchIds.isEmpty else { bench = []; return }
+        let entries = (try? await BuildService.tierList(mode)) ?? []
+        guard !Task.isCancelled else { return }
+        let profile = model.myProfile?.usesPracticeGames == true ? nil : model.myProfile
+        bench = ([mine] + benchIds).filter { $0 > 0 }.map { id in
+            let record = profile?.record(for: id)
+            return BenchOption(championId: id, isYours: id == mine, entry: entries.first { $0.championId == id },
+                               personalGames: record?.games ?? 0, personalWinRate: record?.winRate)
+        }
+        .sorted { ($0.entry?.rank ?? 999) < ($1.entry?.rank ?? 999) }
     }
 
     private func banSuggestions(laneEntries: [TierListEntry], taken: Set<Int>, model: AppModel) -> [BanSuggestion] {
@@ -268,7 +321,7 @@ final class DraftAdvisor {
         let lane = self.lane
         async let riot = try? BuildService.riotRecommended(client: client, championId: champion, lane: lane, mapId: mode.mapId)
         var loaded: [EloTier: ChampionBuild] = [:]
-        let tiers: [EloTier] = focusLocked || mode == .ranked ? EloTier.allCases : [.emeraldPlus]
+        let tiers: [EloTier] = mode != .arena && (focusLocked || mode == .ranked) ? EloTier.buildBrackets : [.emeraldPlus]
         await withTaskGroup(of: (EloTier, ChampionBuild?).self) { group in
             for tier in tiers {
                 group.addTask { (tier, try? await BuildService.opggBuild(championId: champion, lane: lane, mode: mode, tier: tier)) }

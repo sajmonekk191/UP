@@ -4,6 +4,15 @@ import Foundation
 enum ClientActions {
     static let pagePrefix = "UP!"
 
+    /// Accepts a found match through the service running the queue: classic matchmaking, else team builder.
+    static func acceptMatch(client: LCUClient) async throws {
+        do {
+            try await client.post("/lol-matchmaking/v1/ready-check/accept")
+        } catch {
+            try await client.post("/lol-lobby-team-builder/v1/ready-check/accept")
+        }
+    }
+
     /// Replaces the toolkit's own rune page (or the current page when no slot is free) with the setup.
     static func importRunes(_ setup: RuneSetup, championName: String, client: LCUClient, allowOverwrite: Bool) async throws {
         let pages: [PerkPage] = try await client.get("/lol-perks/v1/pages")

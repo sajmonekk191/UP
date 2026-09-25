@@ -174,12 +174,21 @@ struct ReadyCheck: Decodable, Sendable {
     var playerResponse: String?
 }
 
+/// Matchmaking of the queues the client runs through team builder, such as Swiftplay.
+struct TeamBuilderMatchmaking: Decodable, Sendable {
+    var readyCheck: ReadyCheck?
+}
+
 struct ChampSelectSession: Decodable, Sendable, Equatable {
     var localPlayerCellId: Int
     var myTeam: [ChampSelectPlayer]
     var theirTeam: [ChampSelectPlayer]?
     var actions: [[ChampSelectAction]]?
     var timer: ChampSelectTimer?
+    var benchEnabled: Bool?
+    var benchChampions: [BenchChampion]?
+    var allowRerolling: Bool?
+    var rerollsRemaining: Int?
 
     var me: ChampSelectPlayer? { myTeam.first { $0.cellId == localPlayerCellId } }
 
@@ -199,6 +208,11 @@ struct ChampSelectPlayer: Decodable, Sendable, Hashable, Identifiable {
     var id: Int { cellId }
     var displayedChampionId: Int { (championId ?? 0) != 0 ? championId! : (championPickIntent ?? 0) }
     var hasIdentity: Bool { !(puuid ?? "").isEmpty }
+}
+
+struct BenchChampion: Decodable, Sendable, Hashable {
+    var championId: Int
+    var isPriority: Bool?
 }
 
 struct ChampSelectAction: Decodable, Sendable, Hashable {

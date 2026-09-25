@@ -58,10 +58,11 @@ enum HUDPreview {
             ("Thresh", 412, "Lantern", "EMERALD", "III", 22, 83, 80, 260_000, 7, "WLWLWWLWLW"),
         ]
         var result: [String: PlayerProfile] = [:]
+        let duos = [3: 0, 6: 5]
         for (index, entry) in roster.enumerated() {
             let (champ, champId, name, tier, division, lp, wins, losses, points, champGames, form) = entry
             let recent = form.enumerated().map { i, ch in
-                HistoryGame(gameId: index * 100 + i, gameCreation: (Date().timeIntervalSince1970 - Double(i) * 7200) * 1000,
+                HistoryGame(gameId: (i < 3 ? duos[index] ?? index : index) * 100 + i, gameCreation: (Date().timeIntervalSince1970 - Double(i) * 7200) * 1000,
                             gameDuration: 1800, gameMode: "CLASSIC", gameType: "MATCHED_GAME", queueId: 420,
                             participants: [HistoryParticipant(championId: i < champGames ? champId : 1,
                                                               stats: HistoryStats(win: ch == "W", kills: 2 + (i + index * 3) % 8, deaths: 2 + (i + index) % 6, assists: 3 + (i * 2 + index) % 9))])

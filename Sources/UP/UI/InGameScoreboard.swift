@@ -47,6 +47,18 @@ struct ChampionExperience {
     }
 }
 
+/// Link icon coloured per premade group, so players who queued together stand out.
+struct PremadeBadge: View {
+    let group: Int
+
+    var body: some View {
+        let colors = [Theme.gold, Theme.accentBright, Theme.good, Theme.warning]
+        Image(systemName: "link").font(.system(size: 9, weight: .bold))
+            .foregroundStyle(colors[(group - 1) % colors.count])
+            .help(tr("Premade: played at least two recent games together with the players marked in the same colour."))
+    }
+}
+
 /// One row of the match overview, joining live game data with the scouted profile.
 struct ScoreboardEntry: Identifiable {
     let live: LivePlayer
@@ -59,6 +71,7 @@ struct ScoreboardEntry: Identifiable {
 /// Large in-game overview of both teams: ranks, games, champion experience, form and live stats.
 struct InGameScoreboard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openPlayer) private var openPlayer
 
     var body: some View {
         if let live = model.live {
@@ -101,7 +114,8 @@ struct InGameScoreboard: View {
     }
 
     private func team(_ title: String, _ entries: [ScoreboardEntry], _ color: Color, live: LiveGameSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let premades = PlayerProfile.premadeGroups(entries.compactMap(\.profile))
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 14) {
                 Label(title, systemImage: "circle.fill").font(.label).textCase(.uppercase).tracking(0.8).foregroundStyle(color)
                     .lineLimit(1).fixedSize()
@@ -116,10 +130,12 @@ struct InGameScoreboard: View {
                 }
                 let mains = entries.filter { ChampionExperience(profile: $0.profile, championId: $0.championId).level.rawValue >= ChampionExperience.Level.veteran.rawValue }.count
                 if mains > 0 { Chip(text: tr("%d on their main", mains), tone: .gold).fixedSize() }
+                let sizes = Dictionary(grouping: premades.values, by: { $0 }).values.map(\.count).sorted(by: >)
+                if !sizes.isEmpty { Chip(text: tr("Premades: %@", sizes.map(String.init).joined(separator: " + ")), tone: .neutral, symbol: "link").fixedSize() }
                 Spacer()
             }
             header
-            ForEach(entries) { row($0, color: color) }
+            ForEach(entries) { row($0, color: color, premade: $0.profile.flatMap { premades[$0.puuid] }) }
         }
     }
 
@@ -134,7 +150,7 @@ struct InGameScoreboard: View {
         .font(.system(size: 9, weight: .semibold)).textCase(.uppercase).tracking(0.6).foregroundStyle(Theme.textMuted)
     }
 
-    private func row(_ entry: ScoreboardEntry, color: Color) -> some View {
+    private func row(_ entry: ScoreboardEntry, color: Color, premade: Int?) -> some View {
         let player = entry.live
         let experience = ChampionExperience(profile: entry.profile, championId: entry.championId)
         let queue = entry.queue
@@ -148,7 +164,15 @@ struct InGameScoreboard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         if let lane = Lane(clientPosition: player.position) { Image(systemName: lane.symbol).font(.system(size: 9)).foregroundStyle(Theme.textMuted) }
-                        Text(player.name).font(.callout.weight(.semibold)).foregroundStyle(player.id == model.live?.me?.id ? Theme.gold : Theme.text).lineLimit(1)
+                        let name = Text(player.name).font(.callout.weight(.semibold)).foregroundStyle(player.id == model.live?.me?.id ? Theme.gold : Theme.text).lineLimit(1)
+                        if let riotId = player.riotId, riotId.contains("#"), let openPlayer {
+                            Button { openPlayer(PlayerQuery(riotId: riotId, region: model.clientRegion ?? model.searchRegion)) } label: { name }
+                                .buttonStyle(.plain).handCursor()
+                                .help(tr("Open the profile of %@", riotId))
+                        } else {
+                            name
+                        }
+                        if let premade { PremadeBadge(group: premade) }
                     }
                     HStack(spacing: 4) {
                         if let level = entry.profile?.summoner?.summonerLevel { Text(tr("Lvl %d", level)).font(.caption2).foregroundStyle(Theme.textMuted) }

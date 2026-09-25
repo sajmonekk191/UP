@@ -46,7 +46,7 @@ struct UPApp: App {
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                 Divider()
                 Button(tr("Accept match")) {
-                    Task { await model.perform(tr("Match accepted")) { try await $0.post("/lol-matchmaking/v1/ready-check/accept") } }
+                    Task { await model.perform(tr("Match accepted")) { try await ClientActions.acceptMatch(client: $0) } }
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             }
@@ -119,11 +119,14 @@ struct ContentView: View {
     @State private var page: Page = .dashboard
     @State private var returnPage: Page = .dashboard
     @State private var buildChampion: Int?
+    @State private var buildMode: QueueMode = .ranked
     @State private var championClass: String?
+    @State private var tierMode: QueueMode = .ranked
     @State private var tierLane: Lane = .middle
     @State private var playerQuery: PlayerQuery?
     @State private var visited: [Page] = [.dashboard]
     @State private var tooltip = TooltipState()
+    @State private var windowOpen = true
 
     var body: some View {
         let style = model.settings.navigationStyle
@@ -135,7 +138,7 @@ struct ContentView: View {
                 ZStack(alignment: .bottom) {
                     Theme.background
                     Theme.backdrop.frame(height: 360).frame(maxHeight: .infinity, alignment: .top)
-                    ForEach(visited.contains(page) ? visited : visited + [page]) { shown in
+                    ForEach(windowOpen ? (visited.contains(page) ? visited : visited + [page]) : []) { shown in
                         PageHost(active: shown == page) { pageView(shown) }
                             .padding(.leading, style == .pill ? 76 : 0)
                     }
@@ -163,8 +166,17 @@ struct ContentView: View {
             if !visited.contains(shown) { visited.append(shown) }
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
-        .task(id: model.isGrading) {
-            guard !model.isGrading, model.myProfile != nil else { return }
+        .onChange(of: windowOpen) { _, open in
+            if !open { visited = [page] }
+        }
+        .onChange(of: model.profileRequest) { _, query in
+            guard let query else { return }
+            playerQuery = query
+            go(.player)
+            model.profileRequest = nil
+        }
+        .task(id: [model.isGrading, windowOpen]) {
+            guard windowOpen, !model.isGrading, model.myProfile != nil else { return }
             for prewarmed in [Page.history, .builds] where !visited.contains(prewarmed) {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { return }
@@ -174,6 +186,7 @@ struct ContentView: View {
         .animation(.snappy(duration: 0.3), value: style)
         .background { sectionShortcuts }
         .background { backShortcut }
+        .background { WindowOpenObserver(isOpen: $windowOpen) }
         .background(Theme.background)
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
@@ -184,9 +197,9 @@ struct ContentView: View {
     private func pageView(_ shown: Page) -> some View {
         let back = BackLink(title: returnPage.title) { go(returnPage) }
         switch shown {
-        case .dashboard: DashboardView { go(.history) }.equatable()
-        case .builds: BuildsView(selection: $buildChampion, championClass: $championClass)
-        case .tierList: TierListView(lane: $tierLane) { id in buildChampion = id; go(.builds) }.equatable()
+        case .dashboard: DashboardView { go(.history) } openBuild: { id in buildMode = .ranked; buildChampion = id; go(.builds) }.equatable()
+        case .builds: BuildsView(selection: $buildChampion, championClass: $championClass, mode: $buildMode)
+        case .tierList: TierListView(mode: $tierMode, lane: $tierLane) { id in buildMode = tierMode; buildChampion = id; go(.builds) }.equatable()
         case .tools: ToolsView(openChampSelect: openChampSelect).equatable()
         case .history: HistoryView(back: back).equatable()
         case .player: PlayerView(query: $playerQuery, back: back).equatable()
@@ -229,6 +242,7 @@ struct ContentView: View {
             go(.player)
         case let .tag(tag):
             if let lane = tag.lane {
+                tierMode = .ranked
                 tierLane = lane
                 go(.tierList)
             } else if let championClass = tag.championClass {
@@ -249,6 +263,36 @@ struct ContentView: View {
                 default: break
                 }
             }
+        }
+    }
+}
+
+/// Reports whether the hosting window is open; SwiftUI keeps a closed window's views alive, so the pages are dropped until it reopens.
+private struct WindowOpenObserver: NSViewRepresentable {
+    @Binding var isOpen: Bool
+
+    func makeNSView(context: Context) -> ObserverView { ObserverView() }
+
+    func updateNSView(_ view: ObserverView, context: Context) {
+        view.onChange = { open in if isOpen != open { isOpen = open } }
+    }
+
+    final class ObserverView: NSView {
+        var onChange: ((Bool) -> Void)?
+        private var tokens: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            tokens.forEach(NotificationCenter.default.removeObserver)
+            tokens = []
+            guard let window else { return }
+            let center = NotificationCenter.default
+            tokens.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.onChange?(false) }
+            })
+            tokens.append(center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self, weak window] _ in
+                MainActor.assumeIsolated { if window?.isVisible == true { self?.onChange?(true) } }
+            })
         }
     }
 }

@@ -6,25 +6,33 @@ struct MatchList: View {
     let games: [HistoryGame]
     let performances: [Int: GamePerformance]
     var grading = false
+    /// Builds cards only as they scroll into view, for long lists placed directly in a scroll view.
+    var lazy = false
     @State private var expanded: Int?
 
     var body: some View {
-        VStack(spacing: 8) {
-            ForEach(games.compactMap { game in game.me.map { (game: game, me: $0) } }, id: \.game.id) { game, me in
-                let open = expanded == game.id
-                VStack(spacing: 0) {
-                    Button { withAnimation(.snappy(duration: 0.3)) { expanded = open ? nil : game.id } } label: {
-                        MatchCard(game: game, me: me, performance: performances[game.id], grading: grading, expanded: open)
-                    }
-                    .buttonStyle(.plain).handCursor()
-                    .help(open ? tr("Hide the players") : tr("Show all players of this match"))
-                    if open {
-                        MatchDetail(game: game, focusPuuid: game.identity(for: me.participantId)?.puuid, cached: model.cachedMatchDetail(game.gameId))
-                            .transition(.modifier(active: Fold(progress: 0), identity: Fold(progress: 1)))
-                    }
+        if lazy {
+            LazyVStack(spacing: 8) { cards }
+        } else {
+            VStack(spacing: 8) { cards }
+        }
+    }
+
+    private var cards: some View {
+        ForEach(games.compactMap { game in game.me.map { (game: game, me: $0) } }, id: \.game.id) { game, me in
+            let open = expanded == game.id
+            VStack(spacing: 0) {
+                Button { withAnimation(.snappy(duration: 0.3)) { expanded = open ? nil : game.id } } label: {
+                    MatchCard(game: game, me: me, performance: performances[game.id], grading: grading, expanded: open)
                 }
-                .background(open ? Theme.surface : .clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .buttonStyle(.plain).handCursor()
+                .help(open ? tr("Hide the players") : tr("Show all players of this match"))
+                if open {
+                    MatchDetail(game: game, focusPuuid: game.identity(for: me.participantId)?.puuid, cached: model.cachedMatchDetail(game.gameId))
+                        .transition(.modifier(active: Fold(progress: 0), identity: Fold(progress: 1)))
+                }
             }
+            .background(open ? Theme.surface : .clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 }

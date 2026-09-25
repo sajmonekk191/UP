@@ -54,6 +54,8 @@ enum SelfTest {
             check("op.gg build (ARAM)", !aram.runes.isEmpty, "\(aram.runes.count) rune sets")
             let arena = try await BuildService.opggBuild(championId: 103, lane: nil, mode: .arena)
             check("op.gg build (Arena)", !arena.augments.isEmpty, "\(arena.augments.count) augments, top 4 \(percent(arena.winRate)), avg place \(arena.averagePlace.map { decimal($0, 2) } ?? "-")")
+            let urf = try await BuildService.opggBuild(championId: 103, lane: nil, mode: .urf)
+            check("op.gg build (URF)", !urf.runes.isEmpty, "\(urf.runes.count) rune sets, patch \(urf.patch ?? "-")")
         } catch {
             check("op.gg build", false, error.localizedDescription)
         }
@@ -72,6 +74,11 @@ enum SelfTest {
 
         let tiers = try? await BuildService.tierList()
         check("Tier list", (tiers?.count ?? 0) > 100, "\(tiers?.count ?? 0) entries")
+        for query in [TierListQuery(flex: true, region: .eune, rank: .masterPlus), TierListQuery(mode: .aram), TierListQuery(mode: .arena), TierListQuery(mode: .urf)] {
+            let list = try? await BuildService.tierList(for: query)
+            let name = "\(query.mode.title)\(query.flex ? " Flex" : "")\(query.region.map { " \($0.code)" } ?? "")"
+            check("Tier list (\(name))", (list?.entries.count ?? 0) > 100, "\(list?.entries.count ?? 0) entries, patch \(list?.patch ?? "-")")
+        }
 
         let accounts = try? await OpggAccounts.search("faker", region: .euw)
         check("op.gg account search", !(accounts ?? []).isEmpty, "\(accounts?.count ?? 0) accounts named faker on EUW")

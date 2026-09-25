@@ -99,6 +99,67 @@ struct PatchTrendChart: View {
     }
 }
 
+/// LP across the recorded ranked readings, with the rank named on the axis and each step coloured by gain or loss.
+struct LPChart: View {
+    let snapshots: [RankSnapshot]
+    @State private var selected: Int?
+
+    var body: some View {
+        let points = Array(snapshots.suffix(30))
+        Chart {
+            ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                AreaMark(x: .value("Game", index), yStart: .value("Min", yDomain.lowerBound), yEnd: .value("LP", point.score))
+                    .foregroundStyle(LinearGradient(colors: [Theme.accent.opacity(0.28), Theme.accent.opacity(0)], startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("Game", index), y: .value("LP", point.score))
+                    .foregroundStyle(Theme.accentBright)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                PointMark(x: .value("Game", index), y: .value("LP", point.score))
+                    .foregroundStyle(index == 0 || point.score >= points[index - 1].score ? Theme.win : Theme.loss)
+                    .symbolSize(26)
+            }
+            if let selected, points.indices.contains(selected) {
+                let point = points[selected]
+                RuleMark(x: .value("Game", selected)).foregroundStyle(Theme.hairlineStrong)
+                    .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
+                        VStack(spacing: 2) {
+                            Text(point.date.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(Theme.textSecondary)
+                            Text(point.label).font(.caption.weight(.semibold)).foregroundStyle(Theme.text)
+                            if selected > 0 {
+                                let change = point.score - points[selected - 1].score
+                                Text(signedLP(change)).font(.caption2.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(change >= 0 ? Theme.win : Theme.loss)
+                            }
+                        }
+                        .padding(6).panelBackground(Theme.raised, radius: 8)
+                    }
+            }
+        }
+        .chartYScale(domain: yDomain)
+        .chartYAxis {
+            AxisMarks(values: ticks) { value in
+                AxisGridLine().foregroundStyle(Theme.hairline)
+                AxisValueLabel { Text(RankSnapshot.label(for: value.as(Int.self) ?? 0)).foregroundStyle(Theme.textMuted) }
+            }
+        }
+        .chartXAxis(.hidden)
+        .chartXSelection(value: $selected)
+        .chartPlotStyle { $0.clipped() }
+        .frame(height: 150)
+    }
+
+    private var yDomain: ClosedRange<Int> {
+        let scores = snapshots.suffix(30).map(\.score)
+        return ((scores.min() ?? 0) - 30)...((scores.max() ?? 100) + 30)
+    }
+
+    /// Division lines, or tier lines when the history spans more than a few divisions.
+    private var ticks: [Int] {
+        let step = yDomain.upperBound - yDomain.lowerBound > 500 ? 400 : 100
+        let first = Int((Double(yDomain.lowerBound) / Double(step)).rounded(.up)) * step
+        return Array(stride(from: first, through: yDomain.upperBound, by: step))
+    }
+}
+
 /// One horizontal bar per player, colored by team, with the value labelled.
 struct PlayerBarChart: View {
     struct Row: Identifiable {

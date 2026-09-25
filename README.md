@@ -32,15 +32,17 @@ The assistant opens by itself when champ select starts. Every champion you own g
 
 Hover a champion and its best rune pages, summoner spells and item set are one click away — or let UP! import them the moment you lock in.
 
+In ARAM your champion and the bench are ranked by op.gg's ARAM tier list, with a one-click swap and reroll. In Arena the suggestions also weigh how each champion does alongside your teammates' picks.
+
 ## The HUD while you play
 
 <p align="center">
   <img src="docs/hud.png" width="320" alt="In-game HUD">
 </p>
 
-Dragon, Baron and inhibitor timers, every enemy with level, KDA and full items (counter items outlined), the gold left to your next item and your CS per minute. <kbd>⌃</kbd><kbd>⇧</kbd><kbd>H</kbd> hides it. It draws over the game in windowed or borderless mode.
+Dragon, Baron and inhibitor timers, every enemy with level, KDA and full items (counter items outlined), the gold left to your next item and your CS per minute. In Arena it shows your champion's best augments by rarity instead. <kbd>⌃</kbd><kbd>⇧</kbd><kbd>H</kbd> hides it. It draws over the game in windowed or borderless mode.
 
-<kbd>⇧</kbd><kbd>Tab</kbd> opens the full match overview: everyone's rank and how they are doing this season, how much they play the champion they picked, their last five games, and their live KDA, CS and items. Under it, your build path, what to buy against this enemy team and how your lane matchup is going.
+<kbd>⇧</kbd><kbd>Tab</kbd> opens the full match overview: everyone's rank and how they are doing this season, how much they play the champion they picked, their last five games, their live KDA, CS and items, and which players queued together. Under it, your build path, what to buy against this enemy team and how your lane matchup is going.
 
 ![Match overview](docs/match-overview.png)
 
@@ -60,8 +62,10 @@ Two more tabs answer friend requests in bulk and turn loot into essence and keys
 
 ## The rest
 
-- **Builds and runes** for Summoner's Rift, ARAM and **Arena** — augments by rarity, prismatic items and the best duo partners. Hover any item or rune for its description.
-- **Tier list** of the current patch, click any champion to open its build.
+- **Builds and runes** for Summoner's Rift, ARAM, **Arena** and URF — augments by rarity, prismatic items and the best duo partners. Hover any item or rune for its description.
+- **Tier list** for Solo/Duo, Flex, ARAM, Arena and URF, by region and rank, with the biggest risers and fallers of the patch. Click any champion to open its build.
+- **Ranked progress**: your LP after every ranked game, today's and this week's gains, and a nudge to take a break after a losing streak.
+- **Champion pool**: your picks in each role rated against the current patch, strong champions worth learning and the ones that fell off.
 - **Match history** graded from S+ to D, with damage and gold charts, and every player one click from their profile.
 - **Player scouting** on any server: rank, form, main champions and their last games.
 - **10 languages**, switched in Settings without a restart.

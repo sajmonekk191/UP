@@ -56,7 +56,7 @@ struct ToolsView: View, Equatable {
             lobbyPanel
             Panel(title: tr("Quick actions"), symbol: "bolt.fill") {
                 LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
-                    action(tr("Accept match"), "checkmark.circle") { try await $0.post("/lol-matchmaking/v1/ready-check/accept") }
+                    action(tr("Accept match"), "checkmark.circle") { try await ClientActions.acceptMatch(client: $0) }
                     action(tr("Play again"), "arrow.uturn.backward") { try await $0.post("/lol-lobby/v2/play-again") }
                     action(tr("Skip post-game stats"), "xmark.rectangle") { try await $0.post("/lol-end-of-game/v1/state/dismiss-stats") }
                     action(tr("Reconnect"), "arrow.triangle.2.circlepath") { try await $0.post("/lol-gameflow/v1/reconnect") }

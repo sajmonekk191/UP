@@ -49,6 +49,7 @@ final class HUDState {
 
     private var previous: [String: HUDPlayer] = [:]
     private var announced: Set<String> = []
+    private var requestedDetails: Set<Int> = []
     private var coreItems: [Int] = []
     private var buildKey = ""
     private var lastEventId = -1
@@ -56,7 +57,7 @@ final class HUDState {
 
     func reset() {
         enemies = []; goal = nil; toasts = []; csPerMinute = 0; myBuild = nil; myChampionId = nil
-        previous = [:]; announced = []; coreItems = []; buildKey = ""; lastEventId = -1; isFirst = true
+        previous = [:]; announced = []; requestedDetails = []; coreItems = []; buildKey = ""; lastEventId = -1; isFirst = true
     }
 
     func ingest(_ live: LiveGameSnapshot, model: AppModel) {
@@ -78,14 +79,17 @@ final class HUDState {
             if player.team != live.myTeam { enemyRows.append(row) }
         }
 
-        let missing = rows.compactMap(\.championId).filter { data.details[$0] == nil }
-        if !missing.isEmpty { Task { await data.prefetchDetails(missing, client: model.client) } }
+        let missing = rows.compactMap(\.championId).filter { data.details[$0] == nil && !requestedDetails.contains($0) }
+        if !missing.isEmpty, let client = model.client {
+            requestedDetails.formUnion(missing)
+            Task { await data.prefetchDetails(missing, client: client) }
+        }
         if isFirst {
             lastEventId = live.announcements.map(\.id).max() ?? -1
         } else {
             diff(enemies: enemyRows, live: live, model: model)
         }
-        enemies = enemyRows
+        if enemies != enemyRows { enemies = enemyRows }
         previous = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         isFirst = false
 
@@ -94,7 +98,8 @@ final class HUDState {
             updateGoal(me: me, gold: live.currentGold ?? 0, model: model)
         }
         objectiveCalls(live)
-        toasts.removeAll { Date().timeIntervalSince($0.date) > 10 }
+        let current = toasts.filter { Date().timeIntervalSince($0.date) <= 10 }
+        if current.count != toasts.count { toasts = current }
     }
 
     // MARK: Events
@@ -159,16 +164,22 @@ final class HUDState {
             buildKey = key
             Task {
                 let mode: QueueMode = model.queueMode
-                if let build = try? await BuildService.opggBuild(championId: championId, lane: lane, mode: mode) {
-                    myBuild = build
-                    myChampionId = championId
-                    coreItems = (build.boots.first?.ids ?? []) + (build.coreItems.first?.ids ?? []) + build.lastItems.prefix(3).flatMap(\.ids)
+                if mode == .arena { await model.gameData.loadAugments(client: model.client) }
+                var build = try? await BuildService.opggBuild(championId: championId, lane: lane, mode: mode)
+                if build == nil, lane != nil { build = try? await BuildService.opggBuild(championId: championId, lane: nil, mode: mode) }
+                guard let build else {
+                    try? await Task.sleep(for: .seconds(20))
+                    if buildKey == key { buildKey = "" }
+                    return
                 }
+                myBuild = build
+                myChampionId = championId
+                coreItems = (build.boots.first?.ids ?? []) + (build.coreItems.first?.ids ?? []) + build.lastItems.prefix(3).flatMap(\.ids)
             }
         }
         let owned = me.items.map(\.itemID)
         guard let next = coreItems.first(where: { !owned.contains($0) }), let item = model.gameData.items[next] else {
-            goal = nil
+            if goal != nil { goal = nil }
             return
         }
         let total = item.priceTotal ?? 0
@@ -177,7 +188,8 @@ final class HUDState {
         if remaining == 0, goal?.itemId == next, (goal?.remaining ?? 0) > 0 {
             push("bag.fill.badge.plus", tr("You can buy %@ now", item.name), .good)
         }
-        goal = ItemGoal(itemId: next, name: item.name, remaining: remaining, total: max(total - componentValue, 1))
+        let newGoal = ItemGoal(itemId: next, name: item.name, remaining: remaining, total: max(total - componentValue, 1))
+        if goal != newGoal { goal = newGoal }
     }
 
     private func push(_ symbol: String, _ text: String, _ tone: Toast.Tone) {

@@ -48,6 +48,24 @@ struct LiveActivePlayer: Decodable, Sendable {
     var riotId: String?
     var summonerName: String?
     var currentGold: Double?
+    /// Points spent per ability key: Q, W, E and R.
+    var abilityLevels: [String: Int] = [:]
+
+    init(riotId: String?, summonerName: String?, currentGold: Double?, abilityLevels: [String: Int] = [:]) {
+        self.riotId = riotId; self.summonerName = summonerName; self.currentGold = currentGold; self.abilityLevels = abilityLevels
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        riotId = try? c.decodeIfPresent(String.self, forKey: .riotId)
+        summonerName = try? c.decodeIfPresent(String.self, forKey: .summonerName)
+        currentGold = try? c.decodeIfPresent(Double.self, forKey: .currentGold)
+        let abilities = (try? c.decodeIfPresent([String: Lossy<Ability>].self, forKey: .abilities)) ?? [:]
+        abilityLevels = abilities.compactMapValues { $0.value?.abilityLevel }
+    }
+
+    private struct Ability: Decodable, Sendable { var abilityLevel: Int? }
+    private enum CodingKeys: String, CodingKey { case riotId, summonerName, currentGold, abilities }
 }
 
 struct LivePlayer: Decodable, Sendable, Identifiable, Hashable {

@@ -89,31 +89,31 @@ final class GameData {
     }
 }
 
-/// Loads and caches images served by the League client (they require LCU auth).
+/// Loads and caches images served by the League client (they require LCU auth), decoded no larger than they are drawn.
 @MainActor
 final class ImageCache {
     static let shared = ImageCache()
     var client: LCUClient?
     private let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
-        cache.totalCostLimit = 256 * 1024 * 1024
+        cache.totalCostLimit = 64 * 1024 * 1024
         return cache
     }()
-    private var inflight: [String: Task<CGImage?, Never>] = [:]
+    private var inflight: [String: Task<(image: CGImage, scaled: Bool)?, Never>] = [:]
 
-    /// Already loaded image, without waiting.
-    func cached(_ key: String) -> NSImage? { cache.object(forKey: key as NSString) }
+    /// Already loaded image that is sharp at `maxPixels`, without waiting; a full-size copy always qualifies.
+    func cached(_ path: String, crop: CGRect? = nil, maxPixels: Int? = nil) -> NSImage? {
+        let full = cache.object(forKey: Self.key(path, crop, nil) as NSString)
+        guard let maxPixels else { return full }
+        return cache.object(forKey: Self.key(path, crop, maxPixels) as NSString) ?? full
+    }
 
-    func image(for path: String, crop: CGRect? = nil) async -> NSImage? {
-        let key = Self.key(path, crop)
-        if let hit = cached(key) { return hit }
-        if let crop {
-            guard let source = await image(for: path), let cropped = Self.crop(source, to: crop) else { return nil }
-            store(cropped, key)
-            return cropped
-        }
-        let task: Task<CGImage?, Never>
-        if let pending = inflight[path] {
+    /// Image at `path`, cut to `crop` (unit rect from the top left) and scaled down to `maxPixels` on its longer side.
+    func image(for path: String, crop: CGRect? = nil, maxPixels: Int? = nil) async -> NSImage? {
+        if let hit = cached(path, crop: crop, maxPixels: maxPixels) { return hit }
+        let key = Self.key(path, crop, maxPixels)
+        let task: Task<(image: CGImage, scaled: Bool)?, Never>
+        if let pending = inflight[key] {
             task = pending
         } else {
             let remote = path.hasPrefix("https://")
@@ -126,39 +126,56 @@ final class ImageCache {
                 } else {
                     data = try? await client?.request("GET", path)
                 }
-                return data.flatMap(Self.decode)
+                return data.flatMap { Self.decode($0, crop: crop, maxPixels: maxPixels) }
             }
-            inflight[path] = task
+            inflight[key] = task
         }
         let decoded = await task.value
-        inflight[path] = nil
-        if let hit = cached(key) { return hit }
+        inflight[key] = nil
+        if let hit = cached(path, crop: crop, maxPixels: maxPixels) { return hit }
         guard let decoded else { return nil }
-        let image = NSImage(cgImage: decoded, size: NSSize(width: decoded.width, height: decoded.height))
-        store(image, path)
+        let image = NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height))
+        cache.setObject(image, forKey: (decoded.scaled ? key : Self.key(path, crop, nil)) as NSString,
+                        cost: decoded.image.width * decoded.image.height * 4)
         return image
     }
 
-    /// Decodes the image data right away, so drawing it later costs the main thread nothing.
-    nonisolated private static func decode(_ data: Data) -> CGImage? {
+    /// Decodes the image right away, so drawing it costs the main thread nothing; `scaled` is set when it came out smaller than the source.
+    nonisolated private static func decode(_ data: Data, crop: CGRect?, maxPixels: Int?) -> (image: CGImage, scaled: Bool)? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        if let crop {
+            return CGImageSourceCreateImageAtIndex(source, 0, nil).flatMap { cropped($0, to: crop, maxPixels: maxPixels) }
+        }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let longest = max(properties?[kCGImagePropertyPixelWidth] as? Int ?? 0, properties?[kCGImagePropertyPixelHeight] as? Int ?? 0)
+        if let maxPixels, longest > maxPixels {
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+                                            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true]
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { ($0, true) }
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary).map { ($0, false) }
     }
 
-    static func key(_ path: String, _ crop: CGRect?) -> String {
-        crop.map { "\(path)#\($0.minX),\($0.minY),\($0.width),\($0.height)" } ?? path
+    /// The `crop` part of `image` redrawn into a bitmap of its own, so the much larger source can be freed.
+    nonisolated private static func cropped(_ image: CGImage, to crop: CGRect, maxPixels: Int?) -> (image: CGImage, scaled: Bool)? {
+        let rect = CGRect(x: crop.minX * CGFloat(image.width), y: crop.minY * CGFloat(image.height),
+                          width: crop.width * CGFloat(image.width), height: crop.height * CGFloat(image.height)).integral
+        let scale = min(1, CGFloat(maxPixels ?? .max) / max(rect.width, rect.height, 1))
+        let width = max(Int((rect.width * scale).rounded()), 1), height = max(Int((rect.height * scale).rounded()), 1)
+        guard let part = image.cropping(to: rect),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(part, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage().map { ($0, scale < 1) }
     }
 
-    private func store(_ image: NSImage, _ key: String) {
-        let pixels = image.representations.map { $0.pixelsWide * $0.pixelsHigh }.max() ?? 0
-        cache.setObject(image, forKey: key as NSString, cost: max(pixels * 4, 1))
-    }
-
-    private static func crop(_ image: NSImage, to crop: CGRect) -> NSImage? {
-        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        let rect = CGRect(x: crop.minX * CGFloat(cg.width), y: crop.minY * CGFloat(cg.height),
-                          width: crop.width * CGFloat(cg.width), height: crop.height * CGFloat(cg.height))
-        return cg.cropping(to: rect).map { NSImage(cgImage: $0, size: rect.size) }
+    private static func key(_ path: String, _ crop: CGRect?, _ maxPixels: Int?) -> String {
+        var key = path
+        if let crop { key += "#\(crop.minX),\(crop.minY),\(crop.width),\(crop.height)" }
+        if let maxPixels { key += "@\(maxPixels)" }
+        return key
     }
 }
 
@@ -179,7 +196,7 @@ struct LCUImage: View {
         self.fill = fill
         self.contentMode = contentMode
         self.crop = crop
-        _image = State(initialValue: path.flatMap { ImageCache.shared.cached(ImageCache.key($0, crop)) })
+        _image = State(initialValue: path.flatMap { ImageCache.shared.cached($0, crop: crop, maxPixels: Self.pixels(for: size)) })
     }
 
     var body: some View {
@@ -194,10 +211,19 @@ struct LCUImage: View {
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .task(id: path) {
             guard let path else { image = nil; return }
-            if let hit = ImageCache.shared.cached(ImageCache.key(path, crop)) { image = hit; return }
+            let pixels = Self.pixels(for: size)
+            if let hit = ImageCache.shared.cached(path, crop: crop, maxPixels: pixels) { image = hit; return }
             image = nil
-            let loaded = await ImageCache.shared.image(for: path, crop: crop)
+            let loaded = await ImageCache.shared.image(for: path, crop: crop, maxPixels: pixels)
             withAnimation(.easeOut(duration: 0.2)) { image = loaded }
         }
+    }
+
+    /// Pixels worth decoding for a fixed size: Retina plus room for the scalable HUD, in steps so nearby sizes share one copy.
+    private static func pixels(for size: CGFloat?) -> Int? {
+        guard let size else { return nil }
+        var pixels = 64
+        while CGFloat(pixels) < size * 3 { pixels *= 2 }
+        return pixels
     }
 }

@@ -87,6 +87,29 @@ struct PlayerProfile: Sendable, Identifiable {
     func record(for championId: Int) -> ChampionRecord? {
         champions.first { $0.championId == championId }
     }
+
+    /// Premade group number per player, for teammates who were in at least two of the same recent games.
+    static func premadeGroups(_ team: [PlayerProfile]) -> [String: Int] {
+        var groups: [String: Int] = [:]
+        var next = 1
+        for (index, player) in team.enumerated() {
+            let games = Set(player.recent.map(\.gameId))
+            for other in team[(index + 1)...] where games.intersection(other.recent.map(\.gameId)).count >= 2 {
+                switch (groups[player.puuid], groups[other.puuid]) {
+                case let (mine?, theirs?) where mine != theirs:
+                    for (puuid, group) in groups where group == theirs { groups[puuid] = mine }
+                case let (mine?, nil): groups[other.puuid] = mine
+                case let (nil, theirs?): groups[player.puuid] = theirs
+                case (nil, nil):
+                    groups[player.puuid] = next
+                    groups[other.puuid] = next
+                    next += 1
+                default: break
+                }
+            }
+        }
+        return groups
+    }
 }
 
 /// Loads and caches player profiles through the League client.

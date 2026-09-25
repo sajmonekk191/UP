@@ -163,6 +163,67 @@ final class SpinnerView: NSView {
     }
 }
 
+/// Circle that swells and fades on repeat, animated by Core Animation so the pulse costs the main thread nothing.
+struct Pulse: NSViewRepresentable {
+    var color: Color
+    var scale: ClosedRange<CGFloat>
+    /// Outline width, or nil for a filled circle.
+    var lineWidth: CGFloat?
+
+    func makeNSView(context: Context) -> PulseView { PulseView(color: NSColor(color), scale: scale, lineWidth: lineWidth) }
+    func updateNSView(_ view: PulseView, context: Context) {}
+}
+
+final class PulseView: NSView {
+    private let circle = CAShapeLayer()
+    private let scale: ClosedRange<CGFloat>
+
+    init(color: NSColor, scale: ClosedRange<CGFloat>, lineWidth: CGFloat?) {
+        self.scale = scale
+        super.init(frame: .zero)
+        wantsLayer = true
+        circle.fillColor = lineWidth == nil ? color.cgColor : nil
+        circle.strokeColor = lineWidth == nil ? nil : color.cgColor
+        circle.lineWidth = lineWidth ?? 0
+        layer?.addSublayer(circle)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        circle.frame = bounds
+        circle.path = CGPath(ellipseIn: bounds, transform: nil)
+        CATransaction.commit()
+        pulse()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        pulse()
+    }
+
+    private func pulse() {
+        guard window != nil, circle.animation(forKey: "pulse") == nil else { return }
+        let grow = CABasicAnimation(keyPath: "transform.scale")
+        grow.fromValue = scale.lowerBound
+        grow.toValue = scale.upperBound
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        let group = CAAnimationGroup()
+        group.animations = [grow, fade]
+        group.duration = 1.4
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        group.repeatCount = .infinity
+        circle.add(group, forKey: "pulse")
+    }
+}
+
 /// Builds its content a moment after appearing, so heavy parts below the fold do not hold up the first paint.
 struct Deferred<Content: View>: View {
     @ViewBuilder var content: Content

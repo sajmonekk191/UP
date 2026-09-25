@@ -28,30 +28,40 @@ enum LockfileLocator {
         return LCUCredentials(port: port, password: String(parts[3]))
     }
 
+    /// Reads the port and token from the running client's arguments, as the kernel reports them.
     static func fromProcessList() -> LCUCredentials? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-A", "-ww", "-o", "args="]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let output = String(data: data, encoding: .utf8) else { return nil }
-
-        for line in output.split(separator: "\n") where line.contains("LeagueClientUx") && line.contains("--app-port=") {
-            guard let port = argument("--app-port=", in: line).flatMap(Int.init),
-                  let token = argument("--remoting-auth-token=", in: line) else { continue }
+        let capacity = proc_listallpids(nil, 0)
+        guard capacity > 0 else { return nil }
+        var pids = [pid_t](repeating: 0, count: Int(capacity) + 64)
+        let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
+        for pid in pids.prefix(Int(max(count, 0))) where pid > 0 && processName(pid) == "LeagueClientUx" {
+            let args = arguments(of: pid)
+            guard let port = args.lazy.compactMap({ value("--app-port=", in: $0) }).first.flatMap(Int.init),
+                  let token = args.lazy.compactMap({ value("--remoting-auth-token=", in: $0) }).first else { continue }
             return LCUCredentials(port: port, password: token)
         }
         return nil
     }
 
-    private static func argument(_ key: String, in line: Substring) -> String? {
-        guard let range = line.range(of: key) else { return nil }
-        let rest = line[range.upperBound...]
-        let value = rest.prefix { $0 != " " && $0 != "\"" }
-        return value.isEmpty ? nil : String(value)
+    private static func processName(_ pid: pid_t) -> String? {
+        var name = [CChar](repeating: 0, count: 64)
+        guard proc_name(pid, &name, UInt32(name.count)) > 0 else { return nil }
+        return String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    /// Arguments of one of the user's processes, parsed from the kernel's argc, path and NUL-separated list.
+    private static func arguments(of pid: pid_t) -> [String] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        let argc = buffer.withUnsafeBytes { Int($0.load(as: Int32.self)) }
+        return buffer[MemoryLayout<Int32>.size..<size].split(separator: 0).dropFirst().prefix(argc).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    private static func value(_ key: String, in argument: String) -> String? {
+        guard argument.hasPrefix(key), argument.count > key.count else { return nil }
+        return String(argument.dropFirst(key.count))
     }
 }

@@ -50,6 +50,7 @@ struct LiveGameSnapshot: Sendable {
     var enemy: TeamSummary
     var inhibitors: [Inhibitor]
     var announcements: [Announcement]
+    var abilityLevels: [String: Int] = [:]
 
     var goldDiff: Int { ally.itemGold - enemy.itemGold }
 }
@@ -160,7 +161,7 @@ enum LiveGameAnalyzer {
                 let lane = raw.hasSuffix("L1") ? "top" : raw.hasSuffix("C1") ? "mid" : "bot"
                 return LiveGameSnapshot.Inhibitor(lane: lane, ours: value.ours, respawnAt: value.respawnAt)
             }.sorted { $0.respawnAt < $1.respawnAt },
-            announcements: announcements)
+            announcements: announcements, abilityLevels: data.activePlayer?.abilityLevels ?? [:])
     }
 }
 

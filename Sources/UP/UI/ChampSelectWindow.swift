@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class ChampSelectWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var lastFrame: NSRect?
     private let model: AppModel
     private var wasInChampSelect = false
 
@@ -52,15 +53,21 @@ final class ChampSelectWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("UPChampSelect")
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
-        window.contentView = NSHostingView(rootView: ChampSelectWindowView().environment(model))
-        window.center()
+        let hosting = NSHostingView(rootView: ChampSelectWindowView().environment(model))
+        hosting.sizingOptions = []
+        window.contentView = hosting
+        if let lastFrame { window.setFrame(lastFrame, display: false) } else { window.center() }
         window.delegate = self
         self.window = window
         return window
     }
 
+    /// The window is rebuilt for each draft, so its views stop observing the model and free their memory in between.
     func windowWillClose(_ notification: Notification) {
         if model.isPreview { model.endPreview() }
+        lastFrame = window?.frame
+        window?.contentView = nil
+        window = nil
     }
 }
 
@@ -118,6 +125,8 @@ private struct DraftHeader: View {
                     .shadow(color: Theme.accent.opacity(0.5), radius: 12)
             }
             if model.isPreview {
+                Segmented(options: [QueueMode.ranked, .aram, .arena].map { ($0, $0.title) },
+                          selection: Binding(get: { model.previewMode }, set: { model.startPreview(mode: $0) }))
                 if model.advisor.focusChampion == nil {
                     Button(tr("Hover top pick")) { model.previewHover() }.buttonStyle(.primary)
                 } else if !model.advisor.focusLocked {
@@ -150,11 +159,12 @@ private struct TeamRail: View {
     let session: ChampSelectSession
 
     var body: some View {
+        let premades = PlayerProfile.premadeGroups(session.myTeam.compactMap { model.profile(for: $0.puuid) })
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(tr("Your team")).eyebrow()
-                    ForEach(session.myTeam) { player in allyRow(player) }
+                    ForEach(session.myTeam) { player in allyRow(player, premade: player.puuid.flatMap { premades[$0] }) }
                 }
                 if let enemies = session.theirTeam, !enemies.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
@@ -189,7 +199,7 @@ private struct TeamRail: View {
         return all.filter { (a: ChampSelectAction) -> Bool in a.type == "ban" && a.completed == true && (a.championId ?? 0) > 0 }
     }
 
-    private func allyRow(_ player: ChampSelectPlayer) -> some View {
+    private func allyRow(_ player: ChampSelectPlayer, premade: Int?) -> some View {
         let isMe = player.cellId == session.localPlayerCellId
         let profile = model.profile(for: player.puuid)
         let queue = profile?.solo?.isRanked == true ? profile?.solo : profile?.flex
@@ -203,6 +213,7 @@ private struct TeamRail: View {
                     }
                     Text(profile?.summoner?.gameName ?? (player.hasIdentity ? player.gameName ?? "" : tr("Hidden"))).font(.callout.weight(.semibold))
                         .foregroundStyle(isMe ? Theme.gold : Theme.text).lineLimit(1)
+                    if let premade { PremadeBadge(group: premade) }
                 }
                 if let profile {
                     HStack(spacing: 6) {
@@ -279,6 +290,10 @@ private struct MyFormCard: View {
                     }
                 }
                 FormStrip(form: Array(profile.form.prefix(10)), size: 14)
+                if profile.streak <= -3 {
+                    Label(tr("%d losses in a row. A short break before the next game usually helps.", -profile.streak), systemImage: "cup.and.saucer.fill")
+                        .font(.caption).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
+                }
                 if let best = profile.champions.filter({ $0.games >= 2 }).max(by: { $0.winRate < $1.winRate }) {
                     HStack(spacing: 6) {
                         ChampionIcon(id: best.championId, size: 22)
@@ -313,16 +328,10 @@ private struct DraftMain: View {
                         PickAdvisorPanel(selected: $previewChampion)
                     }
                 } else {
-                    if model.queueMode == .aram {
-                        Panel(title: "ARAM", symbol: "dice.fill") {
-                            Text(tr("Pick suggestions are for Summoner's Rift. Your runes load as soon as you get a champion.")).foregroundStyle(Theme.textSecondary)
-                        }
-                    } else {
-                        PickAdvisorPanel(selected: $previewChampion)
-                    }
+                    if session.benchEnabled != true { PickAdvisorPanel(selected: $previewChampion) }
                     if let preview = previewChampion { QuickBuild(championId: preview, title: tr("Preview")) }
                     HStack(alignment: .top, spacing: Theme.gap) {
-                        BanPanel()
+                        if (session.actions ?? []).joined().contains(where: { $0.type == "ban" }) { BanPanel() }
                         CompositionPanel()
                     }
                     .environment(\.panelFillsHeight, true)
@@ -365,8 +374,17 @@ private struct PickAdvisorPanel: View {
                 }
                 .buttonStyle(.plain).handCursor()
             }
-            Text(tr("Score combines tier, counters against revealed enemies, your mastery and results, and team fit. Only champions you own."))
-                .font(.caption2).foregroundStyle(Theme.textMuted)
+            Text(footnote).font(.caption2).foregroundStyle(Theme.textMuted)
+        }
+    }
+}
+
+private extension PickAdvisorPanel {
+    var footnote: String {
+        switch model.queueMode {
+        case .ranked: tr("Score combines tier, counters against revealed enemies, your mastery and results, and team fit. Only champions you own.")
+        case .arena: tr("Score combines Arena tier, how well the champion does alongside your teammates' picks, and your mastery and results. Only champions you own.")
+        default: tr("Score combines the champion's strength in %@, your mastery and results, and team fit. Only champions you own.", model.queueMode.title)
         }
     }
 }
@@ -526,27 +544,31 @@ private struct HoverView: View {
     let championId: Int
 
     var body: some View {
-        let advisor = model.advisor
         VStack(alignment: .leading, spacing: Theme.gap) {
             FocusBanner(championId: championId, subtitle: tr("Hovering · lock in to see the full game plan"))
-            let runes = [advisor.builds[.emeraldPlus]?.runes.first, advisor.builds[.masterPlus]?.runes.first, advisor.riotRunes.first].compactMap { $0 }
-            Panel(title: tr("Quick runes"), symbol: "circle.hexagongrid.fill") {
-                ForEach(Array(runes.enumerated()), id: \.element.id) { index, setup in
-                    if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
-                    RuneRow(setup: setup, recommended: index == 0, compact: true) { Task { await model.applyRunes(setup, championId: championId) } }
-                }
-                if runes.isEmpty {
-                    if advisor.loadingFocus {
-                        ForEach(0..<3, id: \.self) { index in
-                            if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
-                            RuneRowSkeleton(compact: true)
-                        }
-                    } else {
-                        Text(tr("No data.")).foregroundStyle(Theme.textMuted)
+            if model.queueMode != .arena { quickRunes }
+            VersusEnemies(championId: championId)
+        }
+    }
+
+    private var quickRunes: some View {
+        let advisor = model.advisor
+        let runes = [advisor.builds[.emeraldPlus]?.runes.first, advisor.builds[.masterPlus]?.runes.first, advisor.riotRunes.first].compactMap { $0 }
+        return Panel(title: tr("Quick runes"), symbol: "circle.hexagongrid.fill") {
+            ForEach(Array(runes.enumerated()), id: \.element.id) { index, setup in
+                if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                RuneRow(setup: setup, recommended: index == 0, compact: true) { Task { await model.applyRunes(setup, championId: championId) } }
+            }
+            if runes.isEmpty {
+                if advisor.loadingFocus {
+                    ForEach(0..<3, id: \.self) { index in
+                        if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                        RuneRowSkeleton(compact: true)
                     }
+                } else {
+                    Text(tr("No data.")).foregroundStyle(Theme.textMuted)
                 }
             }
-            VersusEnemies(championId: championId)
         }
     }
 }
@@ -560,17 +582,20 @@ private struct LockedView: View {
     var body: some View {
         let advisor = model.advisor
         VStack(alignment: .leading, spacing: Theme.gap) {
-            FocusBanner(championId: championId, subtitle: model.isPreview ? tr("Locked in · preview, nothing is sent to the client") : tr("Locked in · runes, spells and items were sent to the client"))
+            FocusBanner(championId: championId, subtitle: subtitle)
+            if !advisor.bench.isEmpty { BenchPanel() }
             if !advisor.gamePlan.isEmpty {
                 Panel(title: tr("Game plan"), symbol: "map.fill") {
                     ForEach(advisor.gamePlan) { TipRow(tip: $0) }
                 }
             }
             VersusEnemies(championId: championId)
-            HStack {
-                Text(tr("Build by elo")).font(.title3.weight(.bold)).foregroundStyle(Theme.text)
-                Spacer()
-                Segmented(options: EloTier.allCases.filter { advisor.builds[$0] != nil }.map { ($0, $0.title) }, selection: $tier)
+            if advisor.builds.count > 1 {
+                HStack {
+                    Text(tr("Build by elo")).font(.title3.weight(.bold)).foregroundStyle(Theme.text)
+                    Spacer()
+                    Segmented(options: EloTier.allCases.filter { advisor.builds[$0] != nil }.map { ($0, $0.title) }, selection: $tier)
+                }
             }
             if advisor.loadingFocus && advisor.builds.isEmpty {
                 BuildSkeleton()
@@ -578,6 +603,64 @@ private struct LockedView: View {
                 BuildDetails(build: advisor.builds[tier] ?? advisor.build, extraRunes: tier == .emeraldPlus ? advisor.riotRunes : [], championId: championId)
             }
         }
+    }
+
+    private var subtitle: String {
+        if model.isPreview { return tr("Locked in · preview, nothing is sent to the client") }
+        return model.queueMode == .arena ? tr("Locked in · the item set was sent to the client") : tr("Locked in · runes, spells and items were sent to the client")
+    }
+}
+
+/// Your champion and the bench of an all-random draft, strongest in the mode first, each one click away.
+private struct BenchPanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let options = model.advisor.bench
+        let mine = options.first { $0.isYours }
+        let session = model.champSelect
+        Panel(title: tr("Bench"), symbol: "arrow.left.arrow.right") {
+            if session?.allowRerolling == true, let left = session?.rerollsRemaining, left > 0 {
+                Button { Task { await model.reroll() } } label: { Label(tr("Reroll (%d left)", left), systemImage: "dice.fill") }
+                    .buttonStyle(.secondary)
+            }
+        } content: {
+            ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+                if index > 0 { Rectangle().fill(Theme.hairline).frame(height: 1) }
+                row(option, stronger: !option.isYours && (option.entry?.rank ?? 999) < (mine?.entry?.rank ?? 999))
+            }
+            Text(tr("Ranked by op.gg's %@ tier list. Taking a champion puts yours on the bench.", model.queueMode.title))
+                .font(.caption2).foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    private func row(_ option: BenchOption, stronger: Bool) -> some View {
+        HStack(spacing: 12) {
+            ChampionIcon(id: option.championId, size: 40, ring: option.isYours ? Theme.gold : stronger ? Theme.accent : nil)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(model.gameData.championName(option.championId)).font(.headline).foregroundStyle(Theme.text)
+                    if option.isYours { Chip(text: tr("You"), tone: .gold) } else if stronger { Chip(text: tr("Stronger than yours"), tone: .accent) }
+                }
+                HStack(spacing: 8) {
+                    if let entry = option.entry {
+                        Text(tierName(entry.tier)).font(.caption.weight(.heavy))
+                            .foregroundStyle(entry.tier <= 1 ? Theme.gold : entry.tier == 2 ? Theme.accentBright : Theme.textSecondary)
+                        Text(tr("%@ WR · #%d", percent(entry.winRate), entry.rank)).font(.caption.monospacedDigit()).foregroundStyle(winRateColor(entry.winRate))
+                    }
+                    if option.personalGames > 0 {
+                        Text(tr("You: %@", tr("%d games · %@", option.personalGames, percent(option.personalWinRate, digits: 0))))
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            }
+            Spacer()
+            if !option.isYours {
+                Button { Task { await model.takeFromBench(option.championId) } } label: { Label(tr("Take"), systemImage: "arrow.down.to.line") }
+                    .buttonStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 

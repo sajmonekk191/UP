@@ -55,6 +55,8 @@ final class AppSettings {
     var hudScale: Double { didSet { save(hudScale, "hudScale") } }
     var navigationStyle: NavigationStyle { didSet { save(navigationStyle.rawValue, "navigationStyle") } }
     var searchRegion: Region? { didSet { save(searchRegion?.rawValue ?? "", "searchRegion") } }
+    var tierListRegion: Region? { didSet { save(tierListRegion?.rawValue ?? "", "tierListRegion") } }
+    var tierListRank: EloTier { didSet { save(tierListRank.rawValue, "tierListRank") } }
 
     init() {
         defaults.register(defaults: [
@@ -83,6 +85,8 @@ final class AppSettings {
         hudScale = defaults.double(forKey: "hudScale")
         navigationStyle = NavigationStyle(rawValue: defaults.string(forKey: "navigationStyle") ?? "") ?? .top
         searchRegion = Region(rawValue: defaults.string(forKey: "searchRegion") ?? "")
+        tierListRegion = Region(rawValue: defaults.string(forKey: "tierListRegion") ?? "")
+        tierListRank = EloTier(rawValue: defaults.string(forKey: "tierListRank") ?? "") ?? .emeraldPlus
     }
 
     private func save(_ value: Any, _ key: String) { defaults.set(value, forKey: key) }
