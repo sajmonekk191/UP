@@ -686,5 +686,11 @@
 "Premade: played at least two recent games together with the players marked in the same colour.",
 "Premades: %@",
 "Few games in this selection (about %d per champion), so the numbers are unreliable.",
-"Next point: %@"
+"Next point: %@",
+"%@ top 4 · %d games",
+"Avg. place %@",
+"1st %@",
+"Prismatic items, best first",
+"%@ top 4",
+"ARAM: Mayhem"
 ]

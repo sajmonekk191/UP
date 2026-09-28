@@ -114,11 +114,19 @@ struct TierListQuery: Hashable, Sendable {
     var rank: EloTier = .emeraldPlus
 
     /// The same query without the options op.gg ignores for its mode.
-    var normalized: TierListQuery { TierListQuery(mode: mode, flex: mode == .ranked && flex, region: region, rank: mode == .arena ? .emeraldPlus : rank) }
+    var normalized: TierListQuery { TierListQuery(mode: mode, flex: mode == .ranked && flex, region: region, rank: mode == .arena ? .emeraldPlus : mode == .aramMayhem ? .all : rank) }
 }
 
 enum QueueMode: String, CaseIterable, Identifiable, Sendable {
     case ranked, aram, arena, urf
+    case aramMayhem = "aram_mayhem_classic"
+
+    /// Queues Riot runs ARAM: Mayhem and its Classic-ish variant on.
+    static let mayhemQueues: Set<Int> = [2400, 2401, 2403, 2405, 2410, 2450, 3240, 3270, 3280]
+
+    /// Whether op.gg reports augments for this mode instead of rune pages.
+    var hasAugments: Bool { self == .arena || self == .aramMayhem }
+
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -126,12 +134,13 @@ enum QueueMode: String, CaseIterable, Identifiable, Sendable {
         case .aram: "ARAM"
         case .arena: tr("Arena")
         case .urf: "URF"
+        case .aramMayhem: tr("ARAM: Mayhem")
         }
     }
     var mapId: Int {
         switch self {
         case .ranked, .urf: 11
-        case .aram: 12
+        case .aram, .aramMayhem: 12
         case .arena: 30
         }
     }
@@ -168,16 +177,20 @@ enum BuildService {
     static func opggBuild(championId: Int, lane: Lane?, mode: QueueMode, tier: EloTier = .emeraldPlus) async throws -> ChampionBuild {
         var lane = lane
         if mode == .ranked, lane == nil { lane = await mainLane(championId) }
+        let tier = mode == .aramMayhem ? EloTier.all : tier
         let key = "\(championId)-\(lane?.rawValue ?? "-")-\(mode.rawValue)-\(tier.rawValue)"
         return try await BuildCache.shared.build(key) { [lane] in
-            try await fetchBuild(championId: championId, lane: lane, mode: mode, tier: tier)
+            do { return try await fetchBuild(championId: championId, lane: lane, mode: mode, tier: tier) } catch {
+                guard mode == .aramMayhem else { throw error }
+                return try await fetchBuild(championId: championId, lane: lane, mode: .aram, tier: .emeraldPlus)
+            }
         }
     }
 
     private static func fetchBuild(championId: Int, lane: Lane?, mode: QueueMode, tier: EloTier) async throws -> ChampionBuild {
         let path = switch mode {
         case .ranked: "\(championId)/\(lane?.opggName ?? "mid")?tier=\(tier.rawValue)"
-        case .aram, .urf: "\(championId)/none?tier=\(tier.rawValue)"
+        case .aram, .urf, .aramMayhem: "\(championId)/none?tier=\(tier.rawValue)"
         case .arena: "\(championId)"
         }
         let url = URL(string: "\(base)/\(mode.rawValue)/\(path)")!

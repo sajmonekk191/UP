@@ -688,5 +688,11 @@ extension Localizer {
     "Premades: %@": "Premady: %@",
     "Few games in this selection (about %d per champion), so the numbers are unreliable.": "V tomto výbere je málo hier (zhruba %d na championa), takže čísla nie sú spoľahlivé.",
     "Next point: %@": "Ďalší bod: %@",
+    "%@ top 4 · %d games": "%@ top 4 · %d hier",
+    "Avg. place %@": "Priem. umiestnenie %@",
+    "1st %@": "1. miesto %@",
+    "Prismatic items, best first": "Prizmatické itemy, najlepšie prvé",
+    "%@ top 4": "%@ top 4",
+    "ARAM: Mayhem": "ARAM: Mayhem",
     ]
 }

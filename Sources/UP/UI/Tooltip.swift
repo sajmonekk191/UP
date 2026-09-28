@@ -57,6 +57,7 @@ private struct GameTooltip: ViewModifier {
 /// Draws the hovered icon's tooltip over the whole window, so no panel can clip it.
 struct TooltipLayer: View {
     @Environment(TooltipState.self) private var state
+    var width: CGFloat = 320
 
     var body: some View {
         GeometryReader { geo in
@@ -89,7 +90,7 @@ struct TooltipLayer: View {
             }
         }
         .padding(10)
-        .frame(width: 320, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .panelBackground(Theme.sidebar, radius: 10)
         .shadow(color: .black.opacity(0.45), radius: 14, y: 4)

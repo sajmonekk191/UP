@@ -164,7 +164,7 @@ final class HUDState {
             buildKey = key
             Task {
                 let mode: QueueMode = model.queueMode
-                if mode == .arena { await model.gameData.loadAugments(client: model.client) }
+                if mode.hasAugments { await model.gameData.loadAugments(client: model.client) }
                 var build = try? await BuildService.opggBuild(championId: championId, lane: lane, mode: mode)
                 if build == nil, lane != nil { build = try? await BuildService.opggBuild(championId: championId, lane: nil, mode: mode) }
                 guard let build else {

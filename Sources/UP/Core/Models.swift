@@ -232,7 +232,7 @@ struct ChampSelectTimer: Decodable, Sendable, Equatable {
 struct GameflowSession: Decodable, Sendable {
     struct Map: Decodable, Sendable { var id: Int? }
     struct GameData: Decodable, Sendable {
-        struct Queue: Decodable, Sendable { var gameMode: String? }
+        struct Queue: Decodable, Sendable { var id: Int?; var gameMode: String? }
         var queue: Queue?
         var teamOne: [GameTeamPlayer]?
         var teamTwo: [GameTeamPlayer]?
@@ -325,6 +325,7 @@ struct AugmentInfo: Decodable, Sendable {
     var id: Int
     var nameTRA: String?
     var augmentSmallIconPath: String?
+    var desc: String?
 }
 
 struct SummonerSpellInfo: Decodable, Sendable {

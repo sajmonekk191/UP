@@ -68,6 +68,7 @@ final class AppModel {
     var mapId: Int { gameSession?.map?.id ?? (gameSession?.gameData?.queue?.gameMode == "ARAM" ? 12 : 11) }
     var queueMode: QueueMode {
         if isPreview { return previewMode }
+        if let queue = gameSession?.gameData?.queue?.id, QueueMode.mayhemQueues.contains(queue) { return .aramMayhem }
         switch gameSession?.gameData?.queue?.gameMode {
         case "CHERRY": return .arena
         case "URF": return .urf
@@ -451,7 +452,7 @@ final class AppModel {
         let myPick = ChampSelectAction(id: 3, actorCellId: 1, championId: 103, completed: false, isInProgress: true, type: "pick")
         let timer = ChampSelectTimer(adjustedTimeLeftInPhase: 90_000, internalNowInEpochMs: Date().timeIntervalSince1970 * 1000)
         let session = switch mode {
-        case .aram, .urf:
+        case .aram, .urf, .aramMayhem:
             ChampSelectSession(localPlayerCellId: 1, myTeam: [player(0, 222), player(1, 86), player(2, 99), player(3, 32), player(4, 25)],
                                theirTeam: [], actions: [], timer: timer, benchEnabled: true,
                                benchChampions: [22, 161, 18, 74].map { BenchChampion(championId: $0, isPriority: false) },

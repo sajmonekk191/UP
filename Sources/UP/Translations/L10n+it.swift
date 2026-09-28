@@ -688,5 +688,11 @@ extension Localizer {
     "Premades: %@": "Premade: %@",
     "Few games in this selection (about %d per champion), so the numbers are unreliable.": "Poche partite in questa selezione (circa %d per campione), quindi i numeri non sono affidabili.",
     "Next point: %@": "Prossimo punto: %@",
+    "%@ top 4 · %d games": "%@ top 4 · %d partite",
+    "Avg. place %@": "Posizione media %@",
+    "1st %@": "1° %@",
+    "Prismatic items, best first": "Oggetti prismatici, i migliori per primi",
+    "%@ top 4": "%@ top 4",
+    "ARAM: Mayhem": "ARAM: Mayhem",
     ]
 }

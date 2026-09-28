@@ -125,7 +125,7 @@ private struct DraftHeader: View {
                     .shadow(color: Theme.accent.opacity(0.5), radius: 12)
             }
             if model.isPreview {
-                Segmented(options: [QueueMode.ranked, .aram, .arena].map { ($0, $0.title) },
+                Segmented(options: [QueueMode.ranked, .aram, .arena, .aramMayhem].map { ($0, $0.title) },
                           selection: Binding(get: { model.previewMode }, set: { model.startPreview(mode: $0) }))
                 if model.advisor.focusChampion == nil {
                     Button(tr("Hover top pick")) { model.previewHover() }.buttonStyle(.primary)
@@ -546,7 +546,7 @@ private struct HoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gap) {
             FocusBanner(championId: championId, subtitle: tr("Hovering · lock in to see the full game plan"))
-            if model.queueMode != .arena { quickRunes }
+            if !model.queueMode.hasAugments { quickRunes }
             VersusEnemies(championId: championId)
         }
     }
@@ -607,7 +607,7 @@ private struct LockedView: View {
 
     private var subtitle: String {
         if model.isPreview { return tr("Locked in · preview, nothing is sent to the client") }
-        return model.queueMode == .arena ? tr("Locked in · the item set was sent to the client") : tr("Locked in · runes, spells and items were sent to the client")
+        return model.queueMode.hasAugments ? tr("Locked in · the item set was sent to the client") : tr("Locked in · runes, spells and items were sent to the client")
     }
 }
 

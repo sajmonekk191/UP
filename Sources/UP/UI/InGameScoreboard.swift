@@ -86,8 +86,11 @@ struct InGameScoreboard: View {
                     MiniHUDToggle()
                     OverlayControls()
                 }
-                team(tr("Your team"), entries.filter { $0.live.team == live.myTeam }, Theme.ally, live: live)
-                team(tr("Enemy team"), entries.filter { $0.live.team != live.myTeam }, Theme.enemy, live: live)
+                if entries.count > 10 {
+                    ScrollView(.vertical) { rosters(entries, live: live) }.frame(maxHeight: 430)
+                } else {
+                    rosters(entries, live: live)
+                }
                 InsightsRow(live: live, insights: MatchInsights(live: live, hud: model.hud, data: model.gameData))
                 if !model.isHUDPreview, entries.contains(where: { $0.profile == nil }) {
                     Label(tr("Loading player data from the client…"), systemImage: "arrow.triangle.2.circlepath")
@@ -99,6 +102,14 @@ struct InGameScoreboard: View {
             .background(WindowDragHandle())
             .background(Theme.background.opacity(0.94), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.accent.opacity(0.35)))
+        }
+    }
+
+    @ViewBuilder
+    private func rosters(_ entries: [ScoreboardEntry], live: LiveGameSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            team(tr("Your team"), entries.filter { $0.live.team == live.myTeam }, Theme.ally, live: live)
+            team(tr("Enemy team"), entries.filter { $0.live.team != live.myTeam }, Theme.enemy, live: live)
         }
     }
 
@@ -357,6 +368,18 @@ private struct InsightsRow: View {
                     Text(goal.remaining == 0 ? tr("Next: %@, you can buy it now", goal.name) : tr("Next: %@, %d g left", goal.name, goal.remaining))
                         .font(.caption.weight(.semibold)).foregroundStyle(goal.remaining == 0 ? Theme.good : Theme.gold)
                 }
+                if let prisms = model.hud.myBuild?.prismItems, !prisms.isEmpty {
+                    Text(tr("Prismatic items, best first")).font(.caption2).foregroundStyle(Theme.textMuted)
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 6), count: 9), alignment: .leading, spacing: 6) {
+                        ForEach(prisms) { stat in
+                            VStack(spacing: 1) {
+                                ItemIcon(id: stat.ids.first ?? 0, size: 26)
+                                Text(percent(stat.winRate, digits: 0)).font(.system(size: 8, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(winRateColor(stat.winRate))
+                            }
+                        }
+                    }
+                }
                 if !insights.skillPriority.isEmpty {
                     HStack(spacing: 4) {
                         Text(tr("Skill max")).font(.caption2).foregroundStyle(Theme.textMuted)
@@ -399,7 +422,27 @@ private struct InsightsRow: View {
 
     private var laneAndThreats: some View {
         card(tr("Lane & threats"), "exclamationmark.triangle.fill") {
-            if let opponent = insights.opponentId {
+            if let build = model.hud.myBuild, let place = build.averagePlace {
+                HStack(spacing: 12) {
+                    Text(tr("Avg. place %@", decimal(place, 2))).font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(Theme.text)
+                    if let first = build.firstPlaceRate {
+                        Text(tr("1st %@", percent(first, digits: 0))).font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(Theme.gold)
+                    }
+                    Text(tr("%@ top 4", percent(build.winRate))).font(.caption2).foregroundStyle(winRateColor(build.winRate))
+                }
+                if !build.duoPartners.isEmpty {
+                    Text(tr("Best duo partners")).font(.caption2).foregroundStyle(Theme.textMuted)
+                    HStack(spacing: 4) {
+                        ForEach(build.duoPartners.sorted { $0.winRate > $1.winRate }.prefix(7)) { duo in
+                            VStack(spacing: 1) {
+                                ChampionIcon(id: duo.championId, size: 24)
+                                Text(percent(duo.winRate, digits: 0)).font(.system(size: 8, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(winRateColor(duo.winRate))
+                            }
+                        }
+                    }
+                }
+            } else if let opponent = insights.opponentId {
                 HStack(spacing: 8) {
                     ChampionIcon(id: opponent, size: 26, ring: Theme.enemy.opacity(0.6))
                     VStack(alignment: .leading, spacing: 1) {

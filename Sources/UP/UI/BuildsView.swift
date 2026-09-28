@@ -296,7 +296,7 @@ private struct BuildPage: View {
             failure = error.localizedDescription
         }
         var riot: [RuneSetup] = []
-        if mode == .arena {
+        if mode.hasAugments {
             await model.gameData.loadAugments(client: client)
         } else if let client {
             riot = (try? await BuildService.riotRecommended(client: client, championId: championId, lane: lane ?? loaded?.availableLanes.first, mapId: mode.mapId)) ?? []
@@ -429,7 +429,7 @@ struct TierListView: View, Equatable {
                                selection: settings.tierListRegion)
                     Segmented(options: QueueMode.allCases.map { ($0, $0.title) }, selection: $mode)
                 }
-                if mode != .arena {
+                if !mode.hasAugments {
                     HStack(spacing: 10) {
                         MenuPicker(symbol: "shield.lefthalf.filled", title: model.settings.tierListRank.title,
                                    groups: [EloTier.brackets.map { ($0, $0.title) }, EloTier.singleTiers.map { ($0, $0.title) }],

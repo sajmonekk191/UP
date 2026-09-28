@@ -123,7 +123,17 @@ struct ItemPanels: View {
                 statList(tr("Starting items"), "bag.fill", build.starterItems.prefix(3)) { ids in HStack(spacing: 3) { ForEach(Array(ids.enumerated()), id: \.offset) { ItemIcon(id: $0.element, size: 28) } } }
             }
             if !build.prismItems.isEmpty {
-                statList(tr("Prismatic items"), "diamond.fill", build.prismItems.prefix(3)) { ids in HStack { ForEach(ids, id: \.self) { ItemIcon(id: $0, size: 28) } } }
+                Panel(title: tr("Prismatic items"), symbol: "diamond.fill") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 6), count: 5), alignment: .leading, spacing: 6) {
+                        ForEach(build.prismItems) { stat in
+                            VStack(spacing: 2) {
+                                ItemIcon(id: stat.ids.first ?? 0, size: 30)
+                                Text(percent(stat.winRate, digits: 0)).font(.system(size: 9, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(winRateColor(stat.winRate))
+                            }
+                        }
+                    }
+                }
             }
             statList(tr("Boots"), "shoeprints.fill", build.boots.prefix(3)) { ids in HStack { ForEach(ids, id: \.self) { ItemIcon(id: $0, size: 28) } } }
         }

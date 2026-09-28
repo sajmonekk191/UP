@@ -68,7 +68,24 @@ final class GameData {
     /// Loads the Arena augments the first time an Arena build needs them.
     func loadAugments(client: LCUClient?) async {
         guard augments.isEmpty, let client, let list: [AugmentInfo] = try? await client.get("/lol-game-data/assets/v1/cherry-augments.json") else { return }
-        augments = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let descriptions = await Self.augmentDescriptions()
+        augments = Dictionary(list.map { info in
+            var info = info
+            info.desc = descriptions[info.id]
+            return (info.id, info)
+        }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Augment descriptions, which the client's own augment file leaves out.
+    private static func augmentDescriptions() async -> [Int: String] {
+        struct Root: Decodable {
+            struct Entry: Decodable { var id: Int; var desc: String? }
+            var augments: [Entry]
+        }
+        guard let url = URL(string: "https://raw.communitydragon.org/latest/cdragon/arena/en_us.json"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let root = try? JSONDecoder().decode(Root.self, from: data) else { return [:] }
+        return Dictionary(root.augments.compactMap { entry in entry.desc.map { (entry.id, $0) } }, uniquingKeysWith: { a, _ in a })
     }
 
     private static func key(_ name: String) -> String { name.lowercased().filter(\.isLetter) }

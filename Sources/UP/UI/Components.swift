@@ -426,6 +426,26 @@ struct SpellIcon: View {
     }
 }
 
+struct AugmentIcon: View {
+    @Environment(AppModel.self) private var model
+    let augment: ChampionBuild.Augment
+    var tint: Color = Theme.accentBright
+    var size: CGFloat = 28
+
+    var body: some View {
+        let info = model.gameData.augments[augment.id]
+        VStack(spacing: 1) {
+            LCUImage(path: info?.augmentSmallIconPath, size: size, corner: 6)
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(tint.opacity(0.7)))
+            Text(percent(augment.winRate, digits: 0)).font(.system(size: size * 0.35, weight: .semibold).monospacedDigit())
+                .foregroundStyle(winRateColor(augment.winRate))
+        }
+        .gameTooltip(id: "augment\(augment.id)", title: info?.nameTRA ?? "#\(augment.id)",
+                     subtitle: tr("%@ top 4 · %d games", percent(augment.winRate), augment.play),
+                     text: info?.desc?.gameText ?? "")
+    }
+}
+
 struct RankEmblem: View {
     let tier: String?
     var size: CGFloat = 44

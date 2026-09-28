@@ -266,6 +266,8 @@ struct InGameStage: View {
                     }
                     .animation(.snappy(duration: 0.25), value: model.hud.toasts)
                 }
+                .overlay { TooltipLayer(width: 240) }
+                .environment(tooltip)
             }
         }
         .padding(6)
@@ -373,7 +375,7 @@ struct InGameHUDView: View {
                 ObjectiveStrip(live: live)
                 if !model.settings.hudCompact {
                     Rectangle().fill(Theme.hairline).frame(height: 1)
-                    if model.queueMode == .arena { ArenaAugments() } else { EnemyWatch() }
+                    if model.queueMode.hasAugments { ArenaAugments() } else { EnemyWatch() }
                     MyGoal()
                     BuildPlan()
                 }
@@ -457,7 +459,8 @@ private struct EnemyWatch: View {
                             Text("\(enemy.level)").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.text)
                                 .padding(.horizontal, 2).background(Theme.background, in: RoundedRectangle(cornerRadius: 2)).offset(x: 3, y: 3)
                         }
-                        .help(model.gameData.championName(enemy.championId))
+                        .gameTooltip(id: "enemy\(enemy.id)", title: model.gameData.championName(enemy.championId),
+                                     subtitle: tr("Level %d", enemy.level), text: "")
                     Text("\(enemy.kills)/\(enemy.deaths)/\(enemy.assists)").font(.system(size: 9.5, weight: .medium).monospacedDigit())
                         .foregroundStyle(Theme.textSecondary).frame(width: 40, alignment: .leading)
                     HStack(spacing: 1.5) {
@@ -478,22 +481,26 @@ private struct ArenaAugments: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let augments = model.hud.myBuild?.augments, !augments.isEmpty {
+        if let build = model.hud.myBuild, !build.augments.isEmpty {
             VStack(alignment: .leading, spacing: 5) {
-                Text(tr("Best augments")).font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
+                HStack(spacing: 6) {
+                    Text(tr("Best augments")).font(.system(size: 8.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.textMuted)
+                    Spacer(minLength: 0)
+                    if let place = build.averagePlace {
+                        Text(tr("Avg. place %@", decimal(place, 2))).font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    if let first = build.firstPlaceRate {
+                        Text(tr("1st %@", percent(first, digits: 0))).font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.gold)
+                    }
+                }
                 ForEach([(8, tr("Prismatic"), Theme.accentBright), (4, tr("Gold"), Theme.gold), (1, tr("Silver"), Theme.textSecondary)], id: \.0) { rarity, name, tint in
-                    let best = augments.filter { $0.rarity == rarity }.prefix(8).sorted { $0.winRate > $1.winRate }.prefix(4)
+                    let best = build.augments.filter { $0.rarity == rarity }.prefix(10).sorted { $0.winRate > $1.winRate }.prefix(5)
                     HStack(spacing: 5) {
                         Text(name).font(.system(size: 9, weight: .bold)).foregroundStyle(tint).frame(width: 54, alignment: .leading)
                         ForEach(Array(best)) { augment in
-                            let info = model.gameData.augments[augment.id]
-                            VStack(spacing: 1) {
-                                LCUImage(path: info?.augmentSmallIconPath, size: 24, corner: 6)
-                                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(tint.opacity(0.7)))
-                                Text(percent(augment.winRate, digits: 0)).font(.system(size: 8.5, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(winRateColor(augment.winRate))
-                            }
-                            .help("\(info?.nameTRA ?? "#\(augment.id)") · \(percent(augment.winRate))")
+                            AugmentIcon(augment: augment, tint: tint, size: 24)
                         }
                     }
                 }
